@@ -2,23 +2,25 @@ use anyhow::{Result, anyhow};
 use std::time::Duration;
 use crate::db::ExtractedData;
 
-use mongodb::{Client, options::ClientOptions, bson::Document};
+use mongodb::{Client as MongoClient, options::ClientOptions as MongoOptions, bson::Document as MongoDocument};
 use redis::{Client as RedisClient, AsyncCommands};
 use cdrs::{frame::IntoBytes, query::QueryExecutor, types::IntoCdrsBy};
 use cdrs_tokio::cluster::TcpCluster;
 use cdrs_tokio::authenticators::NoneAuthenticator;
-use cdrs::types::rows::Row;
+use cdrs::types::rows::Row as CdrsRow;
 use clickhouse_rs::{Client as ClickhouseClient, types::Row as ChRow};
-use influxdb_client_rust::{Client as InfluxClient, models::{Query, Record}};
+use influxdb_client_rust::{Client as InfluxClient, models::{Query as InfluxQuery, Record as InfluxRecord}};
 use elasticsearch::{Elasticsearch, SearchParts};
 use serde_json::{json, Value as JsonValue};
+use neo4rs::{query, Graph};
+use couchbase::{Cluster, ClusterOptions, QueryOptions, QueryResult};
 
 pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str) -> Result<ExtractedData> {
     println!("Подключение к MongoDB: {}", uri);
-    let client_options = ClientOptions::parse(uri).await?;
-    let client = Client::with_options(client_options)?;
+    let client_options = MongoOptions::parse(uri).await?;
+    let client = MongoClient::with_options(client_options)?;
     let db = client.database(db_name);
-    let collection = db.collection::<Document>(collection_name);
+    let collection = db.collection::<MongoDocument>(collection_name);
 
     println!("Извлечение данных из коллекции MongoDB: {}", collection_name);
     let mut cursor = collection.find(None, None).await?;
@@ -281,6 +283,88 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query_body: Json
         }
     } else {
         println!("Elasticsearch запрос не вернул хиты.");
+    }
+
+    Ok(ExtractedData { headers, rows: data_rows })
+}
+
+pub async fn extract_from_neo4j(uri: &str, user: &str, password: &str, query: &str) -> Result<ExtractedData> {
+    println!("Подключение к Neo4j: {}", uri);
+    let graph = Graph::connect(uri, user, password).await?;
+
+    println!("Выполнение Cypher запроса: {}", query);
+    let mut result = graph.execute(query!(query)).await?;
+
+    let mut headers: Vec<String> = Vec::new();
+    let mut data_rows: Vec<Vec<String>> = Vec::new();
+    let mut headers_collected = false;
+
+    while let Ok(Some(row)) = result.next().await {
+        let mut row_values: Vec<String> = Vec::new();
+        let values: Vec<neo4rs::types::Value> = row.collect();
+
+        if !headers_collected {
+            headers = (0..values.len()).map(|i| format!("Column{}", i + 1)).collect();
+            headers_collected = true;
+        }
+
+        for value in values.into_iter() {
+            row_values.push(format!("{}", value));
+        }
+
+        data_rows.push(row_values);
+    }
+
+    Ok(ExtractedData { headers, rows: data_rows })
+}
+
+pub async fn extract_from_couchbase(cluster_url: &str, user: &str, password: &str, bucket_name: &str, query: &str) -> Result<ExtractedData> {
+    println!("Подключение к Couchbase кластеру: {}", cluster_url);
+    let cluster = Cluster::connect(cluster_url, ClusterOptions::default().authenticate(user, password)).await?;
+    let bucket = cluster.bucket(bucket_name)?;
+    let collection = bucket.default_collection();
+
+    println!("Выполнение N1QL запроса: {}", query);
+    let result: QueryResult = cluster.query(query, QueryOptions::default()).await?;
+
+    let mut headers: Vec<String> = Vec::new();
+    let mut data_rows: Vec<Vec<String>> = Vec::new();
+    let mut headers_collected = false;
+
+    let mut rows = result.rows::<JsonValue>();
+    while let Some(row_result) = rows.next().await {
+        let row_json = row_result?;
+
+        if let Some(row_object) = row_json.as_object() {
+            if !headers_collected {
+                headers = row_object.keys().cloned().collect();
+                headers.sort();
+                headers_collected = true;
+            }
+
+            let mut row_values: Vec<String> = Vec::new();
+            for header in &headers {
+                let value = row_object.get(header);
+                let value_str = match value {
+                    Some(val) => val.to_string(),
+                    None => "".to_string(),
+                };
+                row_values.push(value_str);
+            }
+            data_rows.push(row_values);
+
+        } else {
+            eprintln!("Предупреждение: Получена строка результата N1QL, которая не является JSON объектом: {:?}", row_json);
+        }
+
+    }
+
+    if !headers_collected && !data_rows.is_empty() {
+        if let Some(first_data_row) = data_rows.first() {
+            if headers.is_empty() {
+                headers = (0..first_data_row.len()).map(|i| format!("Column{}", i + 1)).collect();
+            }
+        }
     }
 
     Ok(ExtractedData { headers, rows: data_rows })
