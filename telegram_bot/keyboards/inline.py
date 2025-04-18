@@ -28,7 +28,7 @@ def source_selection_keyboard() -> InlineKeyboardMarkup:
         ("Neo4j", "neo4j"), ("Couchbase", "couchbase"),
     ]
     for text, source_type in sources:
-        builder.button(text=text, callback_data=f"select_source:{source_type}")
+        builder.button(text=text, callback_data=f"start_upload_process:{source_type}")
 
     builder.adjust(2)
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="main_menu"))
@@ -62,7 +62,6 @@ def upload_confirm_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def manage_configs_menu_keyboard() -> InlineKeyboardMarkup:
-    """Меню управления сохраненными конфигурациями."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🔗 Источники данных", callback_data="manage_source_configs")
@@ -84,7 +83,7 @@ def manage_source_configs_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📋 Список сохраненных", callback_data="list_source_configs")
     )
     builder.row(
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_configs") # Возврат в меню управления конфигами
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_configs")
     )
     return builder.as_markup()
 
@@ -97,49 +96,59 @@ def manage_tt_configs_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📋 Список сохраненных", callback_data="list_tt_configs")
     )
     builder.row(
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_configs") # Возврат в меню управления конфигами
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_configs")
     )
     return builder.as_markup()
 
-def list_configs_keyboard(configs: List[Dict[str, Any]], config_type: str, offset: int = 0, limit: int = 10) -> InlineKeyboardMarkup:
+def select_input_method_keyboard(config_type: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✏️ Ввести вручную", callback_data=f"select_input_method:manual")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💾 Использовать сохраненную", callback_data=f"select_input_method:saved")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+    return builder.as_markup()
+
+
+def select_config_keyboard(configs: List[Dict[str, Any]], callback_prefix: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if not configs:
         builder.row(InlineKeyboardButton(text="Список пуст", callback_data="ignore"))
     else:
         for config in configs:
-            if config_type == 'source':
+            if 'source_type' in config:
                  text = f"{config['name']} ({config['source_type']})"
-                 callback_prefix = "source_config"
-            elif config_type == 'tt':
+                 builder.row(InlineKeyboardButton(text=text, callback_data=f"select_config:{callback_prefix}:{config['name']}"))
+            elif 'upload_datasheet_id' in config:
                  text = f"{config['name']} (Datasheet ID: {config['upload_datasheet_id']})"
-                 callback_prefix = "tt_config"
+                 builder.row(InlineKeyboardButton(text=text, callback_data=f"select_config:{callback_prefix}:{config['name']}"))
             else:
                  text = config['name']
-                 callback_prefix = "config"
+                 builder.row(InlineKeyboardButton(text=text, callback_data=f"select_config:{callback_prefix}:{config['name']}"))
 
-            builder.row(InlineKeyboardButton(text=text, callback_data=f"{callback_prefix}_actions:{config['name']}"))
 
-    # TODO: Добавить пагинацию, если списки станут большими
-
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"manage_{config_type}_configs"))
-
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")) # Кнопка отмены всегда
     return builder.as_markup()
 
 def config_actions_keyboard(config_name: str, config_type: str) -> InlineKeyboardMarkup:
+    """Клавиатура действий над выбранной конфигурацией (для меню управления)."""
     builder = InlineKeyboardBuilder()
-    # TODO: Кнопка "Использовать" (будет добавлена позже в сценарий загрузки)
+    # TODO: Кнопка "Использовать" здесь может быть добавлена, но ее обработка сложнее, если она вне FSM
     # builder.row(InlineKeyboardButton(text="🚀 Использовать для загрузки", callback_data=f"use_{config_type}_config:{config_name}"))
     # TODO: Кнопка "Редактировать" (сложная реализация)
     # builder.row(InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_{config_type}_config:{config_name}"))
-    builder.row(InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_{config_type}_config_confirm:{config_name}")) # Шаг подтверждения удаления
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к списку", callback_data=f"list_{config_type}_configs")) # Возврат к списку
+    builder.row(InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_{config_type}_config_confirm:{config_name}"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к списку", callback_data=f"list_{config_type}_configs"))
     return builder.as_markup()
-
 
 def delete_confirm_keyboard(config_name: str, config_type: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="✅ Подтвердить удаление", callback_data=f"delete_{config_type}_config:{config_name}"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data=f"{config_type}_actions:{config_name}") # Возврат к меню действий
+        InlineKeyboardButton(text="❌ Отмена", callback_data=f"{config_type}_actions:{config_name}")
     )
     return builder.as_markup()
