@@ -136,6 +136,7 @@ async fn upload_to_true_tabs(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
     loop {
         println!("\nВыберите источник данных:");
         println!("1. PostgreSQL");
@@ -150,6 +151,8 @@ async fn main() -> Result<()> {
         println!("10. Elasticsearch");
         println!("11. Загрузить из Excel файла");
         println!("12. Загрузить из CSV файла");
+        println!("13. Neo4j");
+        println!("14. Couchbase");
         println!("0. Выход");
 
         print!("Введите номер: ");
@@ -276,6 +279,23 @@ async fn main() -> Result<()> {
                 println!("\n--- Загрузка из CSV файла ---");
                 let file_path = read_required_input("Введите путь к CSV файлу: ")?;
                 extraction_result = file_loader::read_csv(&file_path);
+            }
+            "13" => {
+                println!("\n--- Настройки Neo4j ---");
+                let uri = read_required_input("Введите URI Neo4j (например, neo4j://host:port): ")?;
+                let user = read_required_input("Введите имя пользователя: ")?;
+                let password = read_required_input("Введите пароль: ")?;
+                let query = read_required_input("Введите Cypher запрос (например, MATCH (n:Label) RETURN n.name, n.age LIMIT 100): ")?;
+                extraction_result = nosql::extract_from_neo4j(&uri, &user, &password, &query).await;
+            }
+            "14" => {
+                println!("\n--- Настройки Couchbase ---");
+                let cluster_url = read_required_input("Введите URL кластера Couchbase (например, couchbase://host): ")?;
+                let user = read_required_input("Введите имя пользователя: ")?;
+                let password = read_required_input("Введите пароль: ")?;
+                let bucket_name = read_required_input("Введите имя бакета: ")?;
+                let query = read_required_input("Введите N1QL запрос (например, SELECT d.* FROM `bucket_name` d LIMIT 100): ")?;
+                extraction_result = nosql::extract_from_couchbase(&cluster_url, &user, &password, &bucket_name, &query).await;
             }
             "0" => {
                 println!("Выход из программы.");
