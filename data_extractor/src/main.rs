@@ -1,50 +1,72 @@
 use anyhow::{Result, anyhow};
-use std::io::{self, Write};
+use clap::Parser;
+use std::{collections::HashMap, path::PathBuf};
 use data_extractor::{db::{sql, nosql, ExtractedData}, file_loader};
-use serde_json::{Value as JsonValue, json};
+use serde_json::Value as JsonValue;
 use reqwest::{Client, header};
 use tokio::time::{sleep, Duration};
-use std::collections::HashMap;
+use std::io::Write;
 
-fn read_required_input(prompt: &str) -> Result<String> {
-    loop {
-        print!("{}", prompt);
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim().to_string();
-        if trimmed.is_empty() {
-            eprintln!("Это поле обязательно. Пожалуйста, введите значение.");
-        } else {
-            return Ok(trimmed);
-        }
-    }
-}
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    source_type: String,
 
-fn read_optional_input(prompt: &str) -> Result<String> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
+    #[arg(long)]
+    source_url: Option<String>,
 
-fn read_required_json(prompt: &str) -> Result<JsonValue> {
-    loop {
-        print!("{}", prompt);
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            eprintln!("Это поле обязательно. Пожалуйста, введите JSON строку.");
-            continue;
-        }
-        match serde_json::from_str(trimmed) {
-            Ok(json) => return Ok(json),
-            Err(e) => eprintln!("Ошибка парсинга JSON: {}. Попробуйте снова.", e),
-        }
-    }
+    #[arg(long)]
+    source_user: Option<String>,
+
+    #[arg(long)]
+    source_pass: Option<String>,
+
+    #[arg(long)]
+    source_query: Option<String>,
+
+    #[arg(long)]
+    mongo_db: Option<String>,
+    #[arg(long)]
+    mongo_collection: Option<String>,
+    #[arg(long)]
+    redis_pattern: Option<String>,
+    #[arg(long)]
+    cassandra_keyspace: Option<String>,
+    #[arg(long)]
+    cassandra_query: Option<String>,
+    #[arg(long)]
+    influx_token: Option<String>,
+    #[arg(long)]
+    influx_org: Option<String>,
+    #[arg(long)]
+    influx_bucket: Option<String>,
+    #[arg(long)]
+    influx_query: Option<String>,
+    #[arg(long)]
+    es_index: Option<String>,
+    #[arg(long)]
+    es_query: Option<String>,
+    #[arg(long)]
+    neo4j_user: Option<String>,
+    #[arg(long)]
+    neo4j_pass: Option<String>,
+    #[arg(long)]
+    couchbase_bucket: Option<String>,
+    #[arg(long)]
+    couchbase_query: Option<String>,
+
+    #[arg(long)]
+    upload_api_token: String,
+
+    #[arg(long)]
+    upload_datasheet_id: String,
+
+    #[arg(long)]
+    upload_field_map_json: String,
+
+    #[arg(long)]
+    output_xlsx_path: PathBuf,
 }
 
 async fn upload_to_true_tabs(
@@ -136,231 +158,143 @@ async fn upload_to_true_tabs(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
 
-    loop {
-        println!("\nВыберите источник данных:");
-        println!("1. PostgreSQL");
-        println!("2. MySQL");
-        println!("3. SQLite");
-        println!("4. MSSQL");
-        println!("5. MongoDB");
-        println!("6. Redis");
-        println!("7. Cassandra/ScyllaDB");
-        println!("8. ClickHouse");
-        println!("9. InfluxDB");
-        println!("10. Elasticsearch");
-        println!("11. Загрузить из Excel файла");
-        println!("12. Загрузить из CSV файла");
-        println!("13. Neo4j");
-        println!("14. Couchbase");
-        println!("0. Выход");
+    println!("Инициализация...");
 
-        print!("Введите номер: ");
-        io::stdout().flush()?;
-
-        let mut choice = String::new();
-        io::stdin().read_line(&mut choice)?;
-
-        let choice = choice.trim();
-
-        if choice == "0" {
-            println!("Выход из программы.");
-            break;
+    let extraction_result: Result<ExtractedData> = match args.source_type.as_str() {
+        "postgres" => {
+            let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для postgres"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для postgres"))?;
+            sql::get_postgres_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
         }
-
-        let mut extraction_result: Result<ExtractedData> = Err(anyhow!("Выбор не обработан"));
-
-        match choice {
-            "1" => {
-                println!("\n--- Настройки PostgreSQL ---");
-                let db_url = read_required_input("Введите DATABASE_URL_POSTGRES (например, postgres://user:pass@host:port/db): ")?;
-                let query = read_required_input("Введите SQL запрос (например, SELECT * FROM table LIMIT 100): ")?;
-                match sql::get_postgres_pool(&db_url).await {
-                    Ok(pool) => {
-                        println!("Подключено к PostgreSQL.");
-                        extraction_result = sql::extract_from_sql(&pool, &query).await;
-                    },
-                    Err(e) => extraction_result = Err(e),
-                }
-            }
-            "2" => {
-                println!("\n--- Настройки MySQL ---");
-                let db_url = read_required_input("Введите DATABASE_URL_MYSQL (например, mysql://user:pass@host:port/db): ")?;
-                let query = read_required_input("Введите SQL запрос: ")?;
-                match sql::get_mysql_pool(&db_url).await {
-                    Ok(pool) => {
-                        println!("Подключено к MySQL.");
-                        extraction_result = sql::extract_from_sql(&pool, &query).await;
-                    },
-                    Err(e) => extraction_result = Err(e),
-                }
-            }
-            "3" => {
-                println!("\n--- Настройки SQLite ---");
-                let db_url = read_required_input("Введите DATABASE_URL_SQLITE (например, sqlite://./mydatabase.db): ")?;
-                let query = read_required_input("Введите SQL запрос: ")?;
-                match sql::get_sqlite_pool(&db_url).await {
-                    Ok(pool) => {
-                        println!("Подключено к SQLite.");
-                        extraction_result = sql::extract_from_sql(&pool, &query).await;
-                    },
-                    Err(e) => extraction_result = Err(e),
-                }
-            }
-            "4" => {
-                println!("\n--- Настройки MSSQL ---");
-                let db_url = read_required_input("Введите DATABASE_URL_MSSQL (например, mssql://user:pass@host:port/db): ")?;
-                let query = read_required_input("Введите SQL запрос: ")?;
-                match sql::get_mssql_pool(&db_url).await {
-                    Ok(pool) => {
-                        println!("Подключено к MSSQL.");
-                        extraction_result = sql::extract_from_sql(&pool, &query).await;
-                    },
-                    Err(e) => extraction_result = Err(e),
-                }
-            }
-            "5" => {
-                println!("\n--- Настройки MongoDB ---");
-                let uri = read_required_input("Введите MONGODB_URI (например, mongodb://host:port): ")?;
-                let db_name = read_required_input("Введите имя базы данных: ")?;
-                let collection_name = read_required_input("Введите имя коллекции: ")?;
-                extraction_result = nosql::extract_from_mongodb(&uri, &db_name, &collection_name).await;
-            }
-            "6" => {
-                println!("\n--- Настройки Redis ---");
-                let url = read_required_input("Введите REDIS_URL (например, redis://host:port/db): ")?;
-                let key_pattern = read_optional_input("Введите паттерн ключей (оставьте пустым для '*', например, user:*): ")?;
-                let pattern = if key_pattern.is_empty() { "*".to_string() } else { key_pattern };
-                extraction_result = nosql::extract_from_redis(&url, &pattern).await;
-            }
-            "7" => {
-                println!("\n--- Настройки Cassandra/ScyllaDB ---");
-                let addresses = read_required_input("Введите адреса узлов через запятую (например, host1:port,host2:port): ")?;
-                let keyspace = read_required_input("Введите имя keyspace: ")?;
-                let query = read_required_input("Введите CQL запрос: ")?;
-                extraction_result = nosql::extract_from_cassandra(&addresses, &keyspace, &query).await;
-            }
-            "8" => {
-                println!("\n--- Настройки ClickHouse ---");
-                let url = read_required_input("Введите CLICKHOUSE_URL (например, clickhouse://host:port/db): ")?;
-                let query = read_required_input("Введите SQL запрос: ")?;
-                extraction_result = nosql::extract_from_clickhouse(&url, &query).await;
-            }
-            "9" => {
-                println!("\n--- Настройки InfluxDB ---");
-                let url = read_required_input("Введите INFLUXDB_URL (например, http://host:port): ")?;
-                let token = read_required_input("Введите INFLUXDB_TOKEN: ")?;
-                let org = read_required_input("Введите INFLUXDB_ORG: ")?;
-                let bucket = read_required_input("Введите INFLUXDB_BUCKET: ")?;
-                let query = read_required_input("Введите Flux запрос (в одну строку): ")?;
-                extraction_result = nosql::extract_from_influxdb(&url, &token, &org, &bucket, &query).await;
-            }
-            "10" => {
-                println!("\n--- Настройки Elasticsearch ---");
-                let url = read_required_input("Введите ELASTICSEARCH_URL (например, http://host:port): ")?;
-                let index = read_required_input("Введите имя индекса: ")?;
-                let query_str = read_optional_input("Введите JSON тело запроса (оставьте пустым для match_all='{}'): ")?;
-                let query_str = if query_str.is_empty() { "{}".to_string() } else { query_str };
-
-                let es_query: Result<JsonValue, _> = serde_json::from_str(&query_str);
-                match es_query {
-                    Ok(query_body) => {
-                        extraction_result = nosql::extract_from_elasticsearch(&url, &index, query_body).await;
-                    },
-                    Err(e) => extraction_result = Err(anyhow!("Ошибка парсинга JSON запроса: {}", e)),
-                }
-            }
-            "11" => {
-                println!("\n--- Загрузка из Excel файла ---");
-                let file_path = read_required_input("Введите путь к Excel файлу (.xlsx, .xls): ")?;
-                extraction_result = file_loader::read_excel(&file_path);
-            }
-            "12" => {
-                println!("\n--- Загрузка из CSV файла ---");
-                let file_path = read_required_input("Введите путь к CSV файлу: ")?;
-                extraction_result = file_loader::read_csv(&file_path);
-            }
-            "13" => {
-                println!("\n--- Настройки Neo4j ---");
-                let uri = read_required_input("Введите URI Neo4j (например, neo4j://host:port): ")?;
-                let user = read_required_input("Введите имя пользователя: ")?;
-                let password = read_required_input("Введите пароль: ")?;
-                let query = read_required_input("Введите Cypher запрос (например, MATCH (n:Label) RETURN n.name, n.age LIMIT 100): ")?;
-                extraction_result = nosql::extract_from_neo4j(&uri, &user, &password, &query).await;
-            }
-            "14" => {
-                println!("\n--- Настройки Couchbase ---");
-                let cluster_url = read_required_input("Введите URL кластера Couchbase (например, couchbase://host): ")?;
-                let user = read_required_input("Введите имя пользователя: ")?;
-                let password = read_required_input("Введите пароль: ")?;
-                let bucket_name = read_required_input("Введите имя бакета: ")?;
-                let query = read_required_input("Введите N1QL запрос (например, SELECT d.* FROM `bucket_name` d LIMIT 100): ")?;
-                extraction_result = nosql::extract_from_couchbase(&cluster_url, &user, &password, &bucket_name, &query).await;
-            }
-            "0" => {
-                println!("Выход из программы.");
-                break;
-            }
-            _ => {
-                eprintln!("Неверный ввод. Пожалуйста, выберите номер из списка.");
-                continue;
-            }
+        "mysql" => {
+            let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для mysql"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для mysql"))?;
+            sql::get_mysql_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
         }
+        "sqlite" => {
+            let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для sqlite"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для sqlite"))?;
+            sql::get_sqlite_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+        }
+        "mssql" => {
+            let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для mssql"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для mssql"))?;
+            sql::get_mssql_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+        }
+        "mongodb" => {
+            let uri = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URI) для mongodb"))?;
+            let db_name = args.mongo_db.ok_or_else(|| anyhow!("Не указан --mongo-db для mongodb"))?;
+            let collection_name = args.mongo_collection.ok_or_else(|| anyhow!("Не указана --mongo-collection для mongodb"))?;
+            nosql::extract_from_mongodb(&uri, &db_name, &collection_name).await
+        }
+        "redis" => {
+            let url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URL) для redis"))?;
+            let key_pattern = args.redis_pattern.unwrap_or("*".to_string());
+            nosql::extract_from_redis(&url, &key_pattern).await
+        }
+        "cassandra" => {
+            let addresses = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (адреса через запятую) для cassandra"))?;
+            let keyspace = args.cassandra_keyspace.ok_or_else(|| anyhow!("Не указан --cassandra-keyspace для cassandra"))?;
+            let query = args.cassandra_query.ok_or_else(|| anyhow!("Не указан --cassandra-query для cassandra"))?;
+            nosql::extract_from_cassandra(&addresses, &keyspace, &query).await
+        }
+        "clickhouse" => {
+            let url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URL) для clickhouse"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для clickhouse"))?;
+            nosql::extract_from_clickhouse(&url, &query).await
+        }
+        "influxdb" => {
+            let url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URL) для influxdb"))?;
+            let token = args.influx_token.ok_or_else(|| anyhow!("Не указан --influx-token для influxdb"))?;
+            let org = args.influx_org.ok_or_else(|| anyhow!("Не указан --influx-org для influxdb"))?;
+            let bucket = args.influx_bucket.ok_or_else(|| anyhow!("Не указан --influx-bucket для influxdb"))?;
+            let query = args.influx_query.ok_or_else(|| anyhow!("Не указан --influx-query (Flux запрос) для influxdb"))?;
+            nosql::extract_from_influxdb(&url, &token, &org, &bucket, &query).await
+        }
+        "elasticsearch" => {
+            let url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URL) для elasticsearch"))?;
+            let index = args.es_index.ok_or_else(|| anyhow!("Не указан --es-index для elasticsearch"))?;
+            let query_str = args.es_query.unwrap_or("{}".to_string());
+            let es_query: Result<JsonValue, _> = serde_json::from_str(&query_str).map_err(|e| anyhow!("Ошибка парсинга --es-query JSON: {}", e));
+            es_query.and_then(|query_body| async move {
+                nosql::extract_from_elasticsearch(&url, &index, query_body).await
+            }.await)
+        }
+        "excel" => {
+            let file_path = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (путь к файлу) для excel"))?;
+            file_loader::read_excel(&file_path)
+        }
+        "csv" => {
+            let file_path = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (путь к файлу) для csv"))?;
+            file_loader::read_csv(&file_path)
+        }
+        "neo4j" => {
+            let uri = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URI) для neo4j"))?;
+            let user = args.neo4j_user.ok_or_else(|| anyhow!("Не указан --neo4j-user для neo4j"))?;
+            let pass = args.neo4j_pass.ok_or_else(|| anyhow!("Не указан --neo4j-pass для neo4j"))?;
+            let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query (Cypher запрос) для neo4j"))?;
+            nosql::extract_from_neo4j(&uri, &user, &pass, &query).await
+        }
+        "couchbase" => {
+            let cluster_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URL кластера) для couchbase"))?;
+            let user = args.source_user.ok_or_else(|| anyhow!("Не указан --source-user для couchbase"))?;
+            let pass = args.source_pass.ok_or_else(|| anyhow!("Не указан --source-pass для couchbase"))?;
+            let bucket_name = args.couchbase_bucket.ok_or_else(|| anyhow!("Не указан --couchbase-bucket для couchbase"))?;
+            let query = args.couchbase_query.ok_or_else(|| anyhow!("Не указан --couchbase-query (N1QL запрос) для couchbase"))?;
+            nosql::extract_from_couchbase(&cluster_url, &user, &pass, &bucket_name, &query).await
+        }
+        _ => Err(anyhow!("Неизвестный тип источника данных: {}", args.source_type)),
+    };
 
-        match extraction_result {
-            Ok(data) => {
-                println!("\n--- Результат извлечения ---");
-                println!("Успешно извлечено {} строк.", data.rows.len());
-                if !data.headers.is_empty() {
-                    println!("Заголовки: {:?}", data.headers);
-                } else {
-                    println!("Заголовки не получены или отсутствуют.");
-                }
-
-                if data.headers.is_empty() && !data.rows.is_empty() {
-                    eprintln!("Предупреждение: Извлечены строки данных, но отсутствуют заголовки. Невозможно сопоставить с Field ID.");
-                    continue;
-                }
-                if data.rows.is_empty() {
-                    println!("Нет строк данных для загрузки.");
-                    continue;
-                }
-
-                println!("\n--- Сопоставление колонок с Field ID True Tabs ---");
-                println!("Для каждого извлеченного заголовка (колонки) введите соответствующий Field ID из вашей таблицы True Tabs.");
-                println!("Если для колонки нет соответствующего поля в True Tabs, оставьте поле ввода пустым.");
-
-                let mut field_map: HashMap<String, String> = HashMap::new();
-                for header_name in &data.headers {
-                    let prompt = format!("Введите Field ID для колонки '{}': ", header_name);
-                    let field_id = read_optional_input(&prompt)?;
-                    if !field_id.is_empty() {
-                        field_map.insert(header_name.clone(), field_id);
-                    }
-                }
-
-                if field_map.is_empty() {
-                    eprintln!("Ошибка: Не было предоставлено ни одного Field ID. Невозможно загрузить данные.");
-                    continue;
-                }
-
-                println!("Сопоставление готово: {:?}", field_map);
-
-                println!("\n--- Загрузка в True Tabs ---");
-                let api_token = read_required_input("Введите токен авторизации для True Tabs API: ")?;
-                let datasheet_id = read_required_input("Введите Datasheet ID для загрузки (например, dst...): ")?;
-
-                match upload_to_true_tabs(data, &api_token, &datasheet_id, &field_map).await {
-                    Ok(_) => println!("Данные успешно загружены в True Tabs."),
-                    Err(e) => eprintln!("Ошибка при загрузке данных в True Tabs: {}", e),
-                }
-
-            },
-            Err(e) => {
-                eprintln!("Произошла ошибка при извлечении данных: {}", e);
+    match extraction_result {
+        Ok(data) => {
+            println!("Извлечение успешно. Извлечено {} строк.", data.rows.len());
+            if data.headers.is_empty() && !data.rows.is_empty() {
+                eprintln!("Предупреждение: Извлечены строки данных, но отсутствуют заголовки. Невозможно сопоставить с Field ID.");
             }
+            if data.rows.is_empty() {
+                println!("Нет строк данных для загрузки.");
+                println!("STATUS: SUCCESS");
+                println!("FILE_PATH: {}", args.output_xlsx_path.display());
+                return Ok(());
+            }
+            if data.headers.is_empty() {
+                eprintln!("STATUS: ERROR");
+                eprintln!("MESSAGE: Отсутствуют заголовки, невозможно сопоставить с Field ID.");
+                return Err(anyhow!("Отсутствуют заголовки, невозможно сопоставить с Field ID."));
+            }
+
+
+            let field_map: HashMap<String, String> = serde_json::from_str(&args.upload_field_map_json)
+                .map_err(|e| anyhow!("Ошибка парсинга --upload-field-map-json: {}", e))?;
+
+            if field_map.is_empty() {
+                eprintln!("STATUS: ERROR");
+                eprintln!("MESSAGE: Не была предоставлена непустая мапа Field ID (--upload-field-map-json).");
+                return Err(anyhow!("Не была предоставлена непустая мапа Field ID (--upload-field-map-json)."));
+            }
+
+            for header in &data.headers {
+                if !field_map.contains_key(header) {
+                    eprintln!("Предупреждение: Для извлеченного заголовка '{}' не найден Field ID в предоставленной мапе.", header);
+                }
+            }
+
+            file_loader::write_excel(&data, args.output_xlsx_path.to_str().ok_or_else(|| anyhow!("Неверный путь для сохранения XLSX"))?)?;
+
+            upload_to_true_tabs(data, &args.upload_api_token, &args.upload_datasheet_id, &field_map).await?;
+
+            println!("STATUS: SUCCESS");
+            println!("FILE_PATH: {}", args.output_xlsx_path.display());
+
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("STATUS: ERROR");
+            eprintln!("MESSAGE: {}", e);
+            Err(e)
         }
     }
-
-    Ok(())
 }
