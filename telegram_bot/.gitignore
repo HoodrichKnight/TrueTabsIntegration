@@ -1,0 +1,11 @@
+/.env
+.idea/
+.DS_Store
+Thumbs.db
+*.d
+*.o
+*.rlib
+*.rmeta
+*~
+*.log
+*.tmp
