@@ -1,11 +1,6 @@
 use anyhow::{Result, anyhow};
 use sqlx::{Executor, FromRow, postgres::PgPool, mysql::MySqlPool, sqlite::SqlitePool, mssql::MssqlPool, Row, Column};
-use std::env;
-use crate::db::ExtractedData; // Импортируем общую структуру
-
-fn get_db_url(key: &str) -> Result<String> {
-    env::var(key).map_err(|e| anyhow!("Переменная окружения {} не найдена: {}", key, e))
-}
+use crate::db::ExtractedData;
 
 pub async fn extract_from_sql<DB>(pool: &sqlx::Pool<DB>, query: &str) -> Result<ExtractedData>
 where
@@ -30,7 +25,7 @@ where
     for<'a> sqlx::types::BigDecimal: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
     for<'a> Option<sqlx::types::BigDecimal>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
     for<'a> sqlx::types::JsonValue: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<sqlx::types::JsonValue>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>
+    for<'a> Option<sqlx::types::JsonValue>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
 {
     println!("Выполнение SQL запроса: {}", query);
     let rows = sqlx::query(query)
@@ -49,13 +44,10 @@ where
         for column in first_row.columns() {
             headers.push(column.name().to_string());
         }
-    } else {
-
     }
 
     for row in rows {
         let mut row_values: Vec<String> = Vec::new();
-        // Итерируемся по колонкам в строке по индексу
         for i in 0..row.columns().len() {
             let value_str = match row.try_get_unchecked::<Option<String>>(i) {
                 Ok(Some(s)) => s,
@@ -119,26 +111,22 @@ where
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn get_postgres_pool() -> Result<PgPool> {
-    let db_url = get_db_url("DATABASE_URL_POSTGRES")?;
+pub async fn get_postgres_pool(db_url: &str) -> Result<PgPool> {
     println!("Подключение к PostgreSQL...");
-    PgPool::connect(&db_url).await.map_err(|e| anyhow!("Ошибка подключения к PostgreSQL: {}", e))
+    PgPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к PostgreSQL: {}", e))
 }
 
-pub async fn get_mysql_pool() -> Result<MySqlPool> {
-    let db_url = get_db_url("DATABASE_URL_MYSQL")?;
+pub async fn get_mysql_pool(db_url: &str) -> Result<MySqlPool> {
     println!("Подключение к MySQL...");
-    MySqlPool::connect(&db_url).await.map_err(|e| anyhow!("Ошибка подключения к MySQL: {}", e))
+    MySqlPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к MySQL: {}", e))
 }
 
-pub async fn get_sqlite_pool() -> Result<SqlitePool> {
-    let db_url = get_db_url("DATABASE_URL_SQLITE")?;
+pub async fn get_sqlite_pool(db_url: &str) -> Result<SqlitePool> {
     println!("Подключение к SQLite...");
-    SqlitePool::connect(&db_url).await.map_err(|e| anyhow!("Ошибка подключения к SQLite: {}", e))
+    SqlitePool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к SQLite: {}", e))
 }
 
-pub async fn get_mssql_pool() -> Result<MssqlPool> {
-    let db_url = get_db_url("DATABASE_URL_MSSQL")?;
+pub async fn get_mssql_pool(db_url: &str) -> Result<MssqlPool> {
     println!("Подключение к MSSQL...");
-    MssqlPool::connect(&db_url).await.map_err(|e| anyhow!("Ошибка подключения к MSSQL: {}", e))
+    MssqlPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к MSSQL: {}", e))
 }
