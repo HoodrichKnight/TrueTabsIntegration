@@ -4,6 +4,7 @@ use data_extractor::db::{sql, nosql, ExtractedData};
 use serde_json::{Value as JsonValue, json};
 use reqwest::{Client, header};
 use tokio::time::{sleep, Duration};
+use std::collections::HashMap;
 
 fn read_required_input(prompt: &str) -> Result<String> {
     loop {
@@ -46,9 +47,14 @@ fn read_required_json(prompt: &str) -> Result<JsonValue> {
     }
 }
 
-async fn upload_to_true_tabs(data: ExtractedData, api_token: &str, datasheet_id: &str) -> Result<()> {
+async fn upload_to_true_tabs(
+    data: ExtractedData,
+    api_token: &str,
+    datasheet_id: &str,
+    field_map: &HashMap<String, String>,
+) -> Result<()> {
     let base_url = "https://true.tabs.sale/fusion/v1/datasheets/";
-    let upload_url = format!("{}{}/records", base_url, datasheet_id);
+    let upload_url = format!("{}{}/records?fieldKey=id", base_url, datasheet_id);
     let client = Client::new();
 
     let batch_size = 1000;
@@ -61,22 +67,27 @@ async fn upload_to_true_tabs(data: ExtractedData, api_token: &str, datasheet_id:
     }
 
     println!("Начата загрузка {} записей в True Tabs Datasheet: {}", total_records, datasheet_id);
+    println!("Используются Field ID для сопоставления колонок.");
 
     for (batch_index, chunk) in data.rows.chunks(batch_size).enumerate() {
         let mut records_json: Vec<JsonValue> = Vec::new();
 
         for row in chunk {
             let mut record_object = serde_json::Map::new();
-            for (i, header) in data.headers.iter().enumerate() {
-                let value_str = row.get(i).unwrap_or(&"".to_string());
-                record_object.insert(header.clone(), JsonValue::String(value_str.clone()));
+            for (i, header_name) in data.headers.iter().enumerate() {
+                if let Some(field_id) = field_map.get(header_name) {
+                    let value_str = row.get(i).unwrap_or(&"".to_string());
+                    record_object.insert(field_id.clone(), JsonValue::String(value_str.clone()));
+                } else {
+                    eprintln!("Предупреждение: Не найден Field ID для колонки '{}'. Пропускаем поле.", header_name);
+                }
             }
             records_json.push(JsonValue::Object(record_object));
         }
 
         let request_body = json!({
             "records": records_json,
-            "fieldKey": "name"
+            "fieldKey": "id"
         });
 
         println!("Отправка батча {} ({} записей)...", batch_index + 1, chunk.len());
@@ -272,11 +283,40 @@ async fn main() -> Result<()> {
                     println!("Заголовки не получены или отсутствуют.");
                 }
 
+                if data.headers.is_empty() && !data.rows.is_empty() {
+                    eprintln!("Предупреждение: Извлечены строки данных, но отсутствуют заголовки. Невозможно сопоставить с Field ID.");
+                    continue;
+                }
+                if data.rows.is_empty() {
+                    println!("Нет строк данных для загрузки.");
+                    continue;
+                }
+
+                println!("\n--- Сопоставление колонок с Field ID True Tabs ---");
+                println!("Для каждого извлеченного заголовка (колонки) введите соответствующий Field ID из вашей таблицы True Tabs.");
+                println!("Если для колонки нет соответствующего поля в True Tabs, оставьте поле ввода пустым.");
+
+                let mut field_map: HashMap<String, String> = HashMap::new();
+                for header_name in &data.headers {
+                    let prompt = format!("Введите Field ID для колонки '{}': ", header_name);
+                    let field_id = read_optional_input(&prompt)?;
+                    if !field_id.is_empty() {
+                        field_map.insert(header_name.clone(), field_id);
+                    }
+                }
+
+                if field_map.is_empty() {
+                    eprintln!("Ошибка: Не было предоставлено ни одного Field ID. Невозможно загрузить данные.");
+                    continue;
+                }
+
+                println!("Сопоставление готово: {:?}", field_map);
+
                 println!("\n--- Загрузка в True Tabs ---");
                 let api_token = read_required_input("Введите токен авторизации для True Tabs API: ")?;
                 let datasheet_id = read_required_input("Введите Datasheet ID для загрузки (например, dst...): ")?;
 
-                match upload_to_true_tabs(data, &api_token, &datasheet_id).await {
+                match upload_to_true_tabs(data, &api_token, &datasheet_id, &field_map).await {
                     Ok(_) => println!("Данные успешно загружены в True Tabs."),
                     Err(e) => eprintln!("Ошибка при загрузке данных в True Tabs: {}", e),
                 }
