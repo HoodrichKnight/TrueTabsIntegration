@@ -2,25 +2,14 @@ use anyhow::{Result, anyhow};
 use std::time::Duration;
 use crate::db::ExtractedData;
 
-// MongoDB
 use mongodb::{Client, options::ClientOptions, bson::Document};
-
-// Redis
 use redis::{Client as RedisClient, AsyncCommands};
-
-// Cassandra / ScyllaDB
 use cdrs::{frame::IntoBytes, query::QueryExecutor, types::IntoCdrsBy};
 use cdrs_tokio::cluster::TcpCluster;
 use cdrs_tokio::authenticators::NoneAuthenticator;
 use cdrs::types::rows::Row;
-
-// ClickHouse
 use clickhouse_rs::{Client as ClickhouseClient, types::Row as ChRow};
-
-// InfluxDB
 use influxdb_client_rust::{Client as InfluxClient, models::{Query, Record}};
-
-// Elasticsearch
 use elasticsearch::{Elasticsearch, SearchParts};
 use serde_json::{json, Value as JsonValue};
 
@@ -41,7 +30,7 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
     while let Some(doc) = cursor.next().await.transpose()? {
         if !headers_collected {
             headers = doc.keys().cloned().collect();
-            headers.sort(); // Сортируем для консистентности
+            headers.sort();
             headers_collected = true;
         }
 
@@ -50,8 +39,7 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
             let value = doc.get(header);
             let value_str = match value {
                 Some(bson::Bson::String(s)) => s.clone(),
-                Some(bson::Bson::Int32(i)) => i.to_string(),
-                Some(bson::Bson::Int64(i)) => i.to_string(),
+                Some(bson::Bson::Int32(i) | bson::Bson::Int64(i)) => i.to_string(),
                 Some(bson::Bson::Double(d)) => d.to_string(),
                 Some(bson::Bson::Boolean(b)) => b.to_string(),
                 Some(bson::Bson::DateTime(dt)) => dt.to_string(),
