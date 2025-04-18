@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use std::{fs::File, path::Path};
 use csv::ReaderBuilder;
 use calamine::{open_workbook_auto, Reader, Data};
+use rust_xlsxwriter::{Workbook, Format, FormatAlign, XlsxError};
 
 use crate::db::ExtractedData;
 
@@ -46,7 +47,7 @@ pub fn read_excel(file_path: &str) -> Result<ExtractedData> {
     let sheet_name = workbook.sheet_names().get(0).ok_or_else(|| anyhow::anyhow!("В Excel файле нет листов"))?.clone();
 
     let range = workbook.worksheet_range(&sheet_name)
-        .ok_or_else(|| anyhow::anyhow!("Не удалось прочитать лист '{}'", sheet_name))?
+        .ok_or_else(|| anyhow::anyry!("Не удалось прочитать лист '{}'", sheet_name))?
         .map_err(|e| anyhow!("Ошибка чтения данных из листа '{}': {}", sheet_name, e))?;
 
     let mut headers: Vec<String> = Vec::new();
@@ -84,4 +85,28 @@ pub fn read_excel(file_path: &str) -> Result<ExtractedData> {
     println!("Успешно прочитано {} строк данных из Excel.", data_rows.len());
 
     Ok(ExtractedData { headers, rows: data_rows })
+}
+
+pub fn write_excel(data: &ExtractedData, file_path: &str) -> Result<(), XlsxError> {
+    println!("Сохранение данных в XLSX файл: {}", file_path);
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+
+    if !data.headers.is_empty() {
+        let header_format = Format::new().set_bold();
+        for (col_num, header) in data.headers.iter().enumerate() {
+            worksheet.write_string(0, col_num as u16, header, Some(&header_format))?;
+        }
+    }
+
+    for (row_num, row_data) in data.rows.iter().enumerate() {
+        for (col_num, cell_data) in row_data.iter().enumerate() {
+            worksheet.write_string((row_num + 1) as u32, col_num as u16, cell_data, None)?;
+        }
+    }
+
+    workbook.save(file_path)?;
+    println!("Данные успешно сохранены в {}.", file_path);
+
+    Ok(())
 }
