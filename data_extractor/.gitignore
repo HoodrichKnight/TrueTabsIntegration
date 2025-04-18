@@ -1,0 +1,22 @@
+/target/
+
+/.env
+
+.idea/
+
+.DS_Store # macOS
+Thumbs.db # Windows
+
+*.d
+*.o
+*.rlib
+*.rmeta
+
+*.exe
+
+*~
+
+*.log
+*.tmp
+
+/.rust-analyzer/
