@@ -1,14 +1,52 @@
-use anyhow::Result;
-use std::{env, io::{self, Write}};
+use anyhow::{Result, anyhow};
+use std::io::{self, Write};
 use data_extractor::db::{sql, nosql, ExtractedData};
 use serde_json::Value as JsonValue;
+
+fn read_required_input(prompt: &str) -> Result<String> {
+    loop {
+        print!("{}", prompt);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim().to_string();
+        if trimmed.is_empty() {
+            eprintln!("Это поле обязательно. Пожалуйста, введите значение.");
+        } else {
+            return Ok(trimmed);
+        }
+    }
+}
+
+fn read_optional_input(prompt: &str) -> Result<String> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
+fn read_required_json(prompt: &str) -> Result<JsonValue> {
+    loop {
+        print!("{}", prompt);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            eprintln!("Это поле обязательно. Пожалуйста, введите JSON строку.");
+            continue;
+        }
+        match serde_json::from_str(trimmed) {
+            Ok(json) => return Ok(json),
+            Err(e) => eprintln!("Ошибка парсинга JSON: {}. Попробуйте снова.", e),
+        }
+    }
+}
 
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
-    println!("Переменные окружения загружены.");
-
     loop {
         println!("\nВыберите базу данных для извлечения данных:");
         println!("1. PostgreSQL");
@@ -36,120 +74,106 @@ async fn main() -> Result<()> {
             break;
         }
 
-        let extraction_result: Result<ExtractedData> = match choice {
+        let mut extraction_result: Result<ExtractedData> = Err(anyhow!("Выбор не обработан"));
+
+        match choice {
             "1" => {
-                match sql::get_postgres_pool().await {
+                println!("\n--- Настройки PostgreSQL ---");
+                let db_url = read_required_input("Введите DATABASE_URL_POSTGRES (например, postgres://user:pass@host:port/db): ")?;
+                let query = read_required_input("Введите SQL запрос (например, SELECT * FROM table LIMIT 100): ")?;
+                match sql::get_postgres_pool(&db_url).await {
                     Ok(pool) => {
                         println!("Подключено к PostgreSQL.");
-                        let query = env::var("POSTGRES_QUERY").unwrap_or_else(|_| "SELECT 1 as example_column".to_string());
-                        sql::extract_from_sql(&pool, &query).await
+                        extraction_result = sql::extract_from_sql(&pool, &query).await;
                     },
-                    Err(e) => Err(e.into()),
+                    Err(e) => extraction_result = Err(e),
                 }
             }
             "2" => {
-                // MySQL
-                match sql::get_mysql_pool().await {
+                println!("\n--- Настройки MySQL ---");
+                let db_url = read_required_input("Введите DATABASE_URL_MYSQL (например, mysql://user:pass@host:port/db): ")?;
+                let query = read_required_input("Введите SQL запрос: ")?;
+                match sql::get_mysql_pool(&db_url).await {
                     Ok(pool) => {
                         println!("Подключено к MySQL.");
-                        let query = env::var("MYSQL_QUERY").unwrap_or_else(|_| "SELECT 1 as example_column".to_string());
-                        sql::extract_from_sql(&pool, &query).await
+                        extraction_result = sql::extract_from_sql(&pool, &query).await;
                     },
-                    Err(e) => Err(e.into()),
+                    Err(e) => extraction_result = Err(e),
                 }
             }
             "3" => {
-                // SQLite
-                match sql::get_sqlite_pool().await {
+                println!("\n--- Настройки SQLite ---");
+                let db_url = read_required_input("Введите DATABASE_URL_SQLITE (например, sqlite://./mydatabase.db): ")?;
+                let query = read_required_input("Введите SQL запрос: ")?;
+                match sql::get_sqlite_pool(&db_url).await {
                     Ok(pool) => {
                         println!("Подключено к SQLite.");
-                        let query = env::var("SQLITE_QUERY").unwrap_or_else(|_| "SELECT 1 as example_column".to_string());
-                        sql::extract_from_sql(&pool, &query).await
+                        extraction_result = sql::extract_from_sql(&pool, &query).await;
                     },
-                    Err(e) => Err(e.into()),
+                    Err(e) => extraction_result = Err(e),
                 }
             }
             "4" => {
-                // MSSQL
-                match sql::get_mssql_pool().await {
+                println!("\n--- Настройки MSSQL ---");
+                let db_url = read_required_input("Введите DATABASE_URL_MSSQL (например, mssql://user:pass@host:port/db): ")?;
+                let query = read_required_input("Введите SQL запрос: ")?;
+                match sql::get_mssql_pool(&db_url).await {
                     Ok(pool) => {
                         println!("Подключено к MSSQL.");
-                        let query = env::var("MSSQL_QUERY").unwrap_or_else(|_| "SELECT 1 as example_column".to_string());
-                        sql::extract_from_sql(&pool, &query).await
+                        extraction_result = sql::extract_from_sql(&pool, &query).await;
                     },
-                    Err(e) => Err(e.into()),
+                    Err(e) => extraction_result = Err(e),
                 }
             }
             "5" => {
-                // MongoDB
-                let mongo_uri = env::var("MONGODB_URI").unwrap_or_else(|_| "".to_string());
-                let mongo_db = env::var("MONGODB_DATABASE").unwrap_or_else(|_| "".to_string());
-                let mongo_collection = env::var("MONGODB_COLLECTION").unwrap_or_else(|_| "".to_string());
-                if mongo_uri.is_empty() || mongo_db.is_empty() || mongo_collection.is_empty() {
-                    Err(anyhow::anyhow!("Настройки MongoDB (MONGODB_URI, MONGODB_DATABASE, MONGODB_COLLECTION) не найдены в .env"))
-                } else {
-                    nosql::extract_from_mongodb(&mongo_uri, &mongo_db, &mongo_collection).await
-                }
+                println!("\n--- Настройки MongoDB ---");
+                let uri = read_required_input("Введите MONGODB_URI (например, mongodb://host:port): ")?;
+                let db_name = read_required_input("Введите имя базы данных: ")?;
+                let collection_name = read_required_input("Введите имя коллекции: ")?;
+                extraction_result = nosql::extract_from_mongodb(&uri, &db_name, &collection_name).await;
             }
             "6" => {
-                // Redis
-                let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "".to_string());
-                let redis_pattern = env::var("REDIS_KEY_PATTERN").unwrap_or_else(|_| "*".to_string());
-                if redis_url.is_empty() {
-                    Err(anyhow::anyhow!("Настройка Redis (REDIS_URL) не найдена в .env"))
-                } else {
-                    nosql::extract_from_redis(&redis_url, &redis_pattern).await
-                }
+                println!("\n--- Настройки Redis ---");
+                let url = read_required_input("Введите REDIS_URL (например, redis://host:port/db): ")?;
+                let key_pattern = read_optional_input("Введите паттерн ключей (оставьте пустым для '*', например, user:*): ")?;
+                let pattern = if key_pattern.is_empty() { "*".to_string() } else { key_pattern };
+                extraction_result = nosql::extract_from_redis(&url, &pattern).await;
             }
             "7" => {
-                // Cassandra/ScyllaDB
-                let cassandra_addresses = env::var("CASSANDRA_ADDRESSES").unwrap_or_else(|_| "".to_string());
-                let cassandra_keyspace = env::var("CASSANDRA_KEYSPACE").unwrap_or_else(|_| "".to_string());
-                let cassandra_query = env::var("CASSANDRA_QUERY").unwrap_or_else(|_| "".to_string());
-                if cassandra_addresses.is_empty() || cassandra_keyspace.is_empty() || cassandra_query.is_empty() {
-                    Err(anyhow::anyhow!("Настройки Cassandra/ScyllaDB (CASSANDRA_ADDRESSES, CASSANDRA_KEYSPACE, CASSANDRA_QUERY) не найдены в .env"))
-                } else {
-                    nosql::extract_from_cassandra(&cassandra_addresses, &cassandra_keyspace, &cassandra_query).await
-                }
+                println!("\n--- Настройки Cassandra/ScyllaDB ---");
+                let addresses = read_required_input("Введите адреса узлов через запятую (например, host1:port,host2:port): ")?;
+                let keyspace = read_required_input("Введите имя keyspace: ")?;
+                let query = read_required_input("Введите CQL запрос: ")?;
+                extraction_result = nosql::extract_from_cassandra(&addresses, &keyspace, &query).await;
             }
             "8" => {
-                // ClickHouse
-                let clickhouse_url = env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "".to_string());
-                let clickhouse_query = env::var("CLICKHOUSE_QUERY").unwrap_or_else(|_| "".to_string());
-                if clickhouse_url.is_empty() || clickhouse_query.is_empty() {
-                    Err(anyhow::anyhow!("Настройки ClickHouse (CLICKHOUSE_URL, CLICKHOUSE_QUERY) не найдены в .env"))
-                } else {
-                    nosql::extract_from_clickhouse(&clickhouse_url, &clickhouse_query).await
-                }
+                println!("\n--- Настройки ClickHouse ---");
+                let url = read_required_input("Введите CLICKHOUSE_URL (например, clickhouse://host:port/db): ")?;
+                let query = read_required_input("Введите SQL запрос: ")?;
+                extraction_result = nosql::extract_from_clickhouse(&url, &query).await;
             }
             "9" => {
-                // InfluxDB
-                let influx_url = env::var("INFLUXDB_URL").unwrap_or_else(|_| "".to_string());
-                let influx_token = env::var("INFLUXDB_TOKEN").unwrap_or_else(|_| "".to_string());
-                let influx_org = env::var("INFLUXDB_ORG").unwrap_or_else(|_| "".to_string());
-                let influx_bucket = env::var("INFLUXDB_BUCKET").unwrap_or_else(|_| "".to_string());
-                let influx_query = env::var("INFLUXDB_QUERY").unwrap_or_else(|_| "".to_string());
-                if influx_url.is_empty() || influx_token.is_empty() || influx_org.is_empty() || influx_bucket.is_empty() || influx_query.is_empty() {
-                    Err(anyhow::anyhow!("Настройки InfluxDB (INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_QUERY) не найдены в .env"))
-                } else {
-                    nosql::extract_from_influxdb(&influx_url, &influx_token, &influx_org, &influx_bucket, &influx_query).await
-                }
+                println!("\n--- Настройки InfluxDB ---");
+                let url = read_required_input("Введите INFLUXDB_URL (например, http://host:port): ")?;
+                let token = read_required_input("Введите INFLUXDB_TOKEN: ")?;
+                let org = read_required_input("Введите INFLUXDB_ORG: ")?;
+                let bucket = read_required_input("Введите INFLUXDB_BUCKET: ")?;
+                let query = read_required_input("Введите Flux запрос (в одну строку): ")?;
+                extraction_result = nosql::extract_from_influxdb(&url, &token, &org, &bucket, &query).await;
             }
             "10" => {
-                // Elasticsearch
-                let es_url = env::var("ELASTICSEARCH_URL").unwrap_or_else(|_| "".to_string());
-                let es_index = env::var("ELASTICSEARCH_INDEX").unwrap_or_else(|_| "".to_string());
-                let es_query_str = env::var("ELASTICSEARCH_QUERY").unwrap_or_else(|_| "{}".to_string());
-                if es_url.is_empty() || es_index.is_empty() {
-                    Err(anyhow::anyhow!("Настройки Elasticsearch (ELASTICSEARCH_URL, ELASTICSEARCH_INDEX) не найдены в .env"))
-                } else {
-                    let es_query: Result<JsonValue, _> = serde_json::from_str(&es_query_str);
-                    match es_query {
-                        Ok(query_body) => {
-                            nosql::extract_from_elasticsearch(&es_url, &es_index, query_body).await
-                        },
-                        Err(e) => Err(anyhow::anyhow!("Ошибка парсинга JSON запроса Elasticsearch из .env: {}", e)),
-                    }
+                println!("\n--- Настройки Elasticsearch ---");
+                let url = read_required_input("Введите ELASTICSEARCH_URL (например, http://host:port): ")?;
+                let index = read_required_input("Введите имя индекса: ")?;
+                let query_str = read_optional_input("Введите JSON тело запроса (оставьте пустым для match_all='{}'): ")?;
+                let query_str = if query_str.is_empty() { "{}".to_string() } else { query_str };
+
+                let es_query: Result<JsonValue, _> = serde_json::from_str(&query_str);
+                match es_query {
+                    Ok(query_body) => {
+                        extraction_result = nosql::extract_from_elasticsearch(&url, &index, query_body).await;
+                    },
+                    Err(e) => extraction_result = Err(anyhow!("Ошибка парсинга JSON запроса: {}", e)),
                 }
             }
             _ => {
@@ -166,6 +190,7 @@ async fn main() -> Result<()> {
                 } else {
                     println!("Заголовки не получены или отсутствуют.");
                 }
+
             },
             Err(e) => {
                 eprintln!("Произошла ошибка при извлечении данных: {}", e);
