@@ -1,26 +1,28 @@
 use anyhow::{Result, anyhow};
-use std::{env, time::Duration};
+use std::time::Duration;
 use crate::db::ExtractedData;
 
+// MongoDB
 use mongodb::{Client, options::ClientOptions, bson::Document};
 
+// Redis
 use redis::{Client as RedisClient, AsyncCommands};
 
+// Cassandra / ScyllaDB
 use cdrs::{frame::IntoBytes, query::QueryExecutor, types::IntoCdrsBy};
 use cdrs_tokio::cluster::TcpCluster;
 use cdrs_tokio::authenticators::NoneAuthenticator;
 use cdrs::types::rows::Row;
 
+// ClickHouse
 use clickhouse_rs::{Client as ClickhouseClient, types::Row as ChRow};
 
+// InfluxDB
 use influxdb_client_rust::{Client as InfluxClient, models::{Query, Record}};
 
+// Elasticsearch
 use elasticsearch::{Elasticsearch, SearchParts};
 use serde_json::{json, Value as JsonValue};
-
-fn get_env_var(key: &str) -> Result<String> {
-    env::var(key).map_err(|e| anyhow!("Переменная окружения {} не найдена: {}", key, e))
-}
 
 pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str) -> Result<ExtractedData> {
     println!("Подключение к MongoDB: {}", uri);
@@ -39,7 +41,7 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
     while let Some(doc) = cursor.next().await.transpose()? {
         if !headers_collected {
             headers = doc.keys().cloned().collect();
-            headers.sort();
+            headers.sort(); // Сортируем для консистентности
             headers_collected = true;
         }
 
@@ -185,7 +187,6 @@ pub async fn extract_from_clickhouse(url: &str, query: &str) -> Result<Extracted
 
     headers = rows.columns().iter().map(|c| c.name().to_string()).collect();
 
-    // Данные
     for row_index in 0..rows.len() {
         let mut row_values: Vec<String> = Vec::new();
         for col_index in 0..rows.columns().len() {
@@ -237,7 +238,6 @@ pub async fn extract_from_influxdb(url: &str, token: &str, org: &str, bucket: &s
     if !headers_collected {
         println!("Flux запрос вернул пустой результат.");
     }
-
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
@@ -294,7 +294,6 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query_body: Json
     } else {
         println!("Elasticsearch запрос не вернул хиты.");
     }
-
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
