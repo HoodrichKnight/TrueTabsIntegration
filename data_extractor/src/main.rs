@@ -1,7 +1,9 @@
 use anyhow::{Result, anyhow};
 use std::io::{self, Write};
 use data_extractor::db::{sql, nosql, ExtractedData};
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
+use reqwest::{Client, header};
+use tokio::time::{sleep, Duration};
 
 fn read_required_input(prompt: &str) -> Result<String> {
     loop {
@@ -44,9 +46,87 @@ fn read_required_json(prompt: &str) -> Result<JsonValue> {
     }
 }
 
+async fn upload_to_true_tabs(data: ExtractedData, api_token: &str, datasheet_id: &str) -> Result<()> {
+    let base_url = "https://true.tabs.sale/fusion/v1/datasheets/";
+    let upload_url = format!("{}{}/records", base_url, datasheet_id);
+    let client = Client::new();
+
+    let batch_size = 1000;
+    let total_records = data.rows.len();
+    let mut uploaded_count = 0;
+
+    if total_records == 0 {
+        println!("Нет данных для загрузки.");
+        return Ok(());
+    }
+
+    println!("Начата загрузка {} записей в True Tabs Datasheet: {}", total_records, datasheet_id);
+
+    for (batch_index, chunk) in data.rows.chunks(batch_size).enumerate() {
+        let mut records_json: Vec<JsonValue> = Vec::new();
+
+        for row in chunk {
+            let mut record_object = serde_json::Map::new();
+            for (i, header) in data.headers.iter().enumerate() {
+                let value_str = row.get(i).unwrap_or(&"".to_string());
+                record_object.insert(header.clone(), JsonValue::String(value_str.clone()));
+            }
+            records_json.push(JsonValue::Object(record_object));
+        }
+
+        let request_body = json!({
+            "records": records_json,
+            "fieldKey": "name"
+        });
+
+        println!("Отправка батча {} ({} записей)...", batch_index + 1, chunk.len());
+
+        let response = client.post(&upload_url)
+            .header(header::AUTHORIZATION, format!("Bearer {}", api_token))
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+
+        if status.is_success() {
+            let api_response: Result<JsonValue, _> = serde_json::from_str(&response_text);
+            match api_response {
+                Ok(api_json) => {
+                    if api_json["success"].as_bool() == Some(true) && api_json["code"].as_u64() == Some(200) {
+                        let records_in_response = api_json["data"]["records"].as_u64().unwrap_or(0);
+                        uploaded_count += records_in_response;
+                        println!("Батч {} успешно загружен. Обработано записей по ответу: {}", batch_index + 1, records_in_response);
+                    } else {
+                        eprintln!("Предупреждение: Батч {} отправлен, но API вернуло success: false или нестандартный код: {}", batch_index + 1, response_text);
+                    }
+                }
+                Err(_) => {
+                    eprintln!("Предупреждение: Батч {} отправлен, получен статус {}, но не удалось распарсить JSON ответ: {}", batch_index + 1, status, response_text);
+                }
+            }
+
+        } else {
+            eprintln!("Ошибка при отправке батча {}: Статус {}, Ответ: {}", batch_index + 1, status, response_text);
+            return Err(anyhow!("Ошибка HTTP статуса при загрузке батча {}: {} - {}", batch_index + 1, status, response_text));
+        }
+
+        if (batch_index + 1) * batch_size < total_records {
+            sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    println!("Загрузка завершена. Всего отправлено батчей: {}. Предположительно загружено записей: {}", data.rows.chunks(batch_size).count(), uploaded_count);
+
+    Ok(())
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
     loop {
         println!("\nВыберите базу данных для извлечения данных:");
         println!("1. PostgreSQL");
@@ -180,15 +260,25 @@ async fn main() -> Result<()> {
                 eprintln!("Неверный ввод. Пожалуйста, выберите номер из списка.");
                 continue;
             }
-        };
+        }
 
         match extraction_result {
             Ok(data) => {
+                println!("\n--- Результат извлечения ---");
                 println!("Успешно извлечено {} строк.", data.rows.len());
                 if !data.headers.is_empty() {
                     println!("Заголовки: {:?}", data.headers);
                 } else {
                     println!("Заголовки не получены или отсутствуют.");
+                }
+
+                println!("\n--- Загрузка в True Tabs ---");
+                let api_token = read_required_input("Введите токен авторизации для True Tabs API: ")?;
+                let datasheet_id = read_required_input("Введите Datasheet ID для загрузки (например, dst...): ")?;
+
+                match upload_to_true_tabs(data, &api_token, &datasheet_id).await {
+                    Ok(_) => println!("Данные успешно загружены в True Tabs."),
+                    Err(e) => eprintln!("Ошибка при загрузке данных в True Tabs: {}", e),
                 }
 
             },
