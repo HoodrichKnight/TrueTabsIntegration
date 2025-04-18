@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use std::io::{self, Write};
-use data_extractor::db::{sql, nosql, ExtractedData};
+use data_extractor::{db::{sql, nosql, ExtractedData}, file_loader};
 use serde_json::{Value as JsonValue, json};
 use reqwest::{Client, header};
 use tokio::time::{sleep, Duration};
@@ -134,12 +134,10 @@ async fn upload_to_true_tabs(
     Ok(())
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
-
     loop {
-        println!("\nВыберите базу данных для извлечения данных:");
+        println!("\nВыберите источник данных:");
         println!("1. PostgreSQL");
         println!("2. MySQL");
         println!("3. SQLite");
@@ -150,6 +148,8 @@ async fn main() -> Result<()> {
         println!("8. ClickHouse");
         println!("9. InfluxDB");
         println!("10. Elasticsearch");
+        println!("11. Загрузить из Excel файла");
+        println!("12. Загрузить из CSV файла");
         println!("0. Выход");
 
         print!("Введите номер: ");
@@ -266,6 +266,20 @@ async fn main() -> Result<()> {
                     },
                     Err(e) => extraction_result = Err(anyhow!("Ошибка парсинга JSON запроса: {}", e)),
                 }
+            }
+            "11" => {
+                println!("\n--- Загрузка из Excel файла ---");
+                let file_path = read_required_input("Введите путь к Excel файлу (.xlsx, .xls): ")?;
+                extraction_result = file_loader::read_excel(&file_path);
+            }
+            "12" => {
+                println!("\n--- Загрузка из CSV файла ---");
+                let file_path = read_required_input("Введите путь к CSV файлу: ")?;
+                extraction_result = file_loader::read_csv(&file_path);
+            }
+            "0" => {
+                println!("Выход из программы.");
+                break;
             }
             _ => {
                 eprintln!("Неверный ввод. Пожалуйста, выберите номер из списка.");
