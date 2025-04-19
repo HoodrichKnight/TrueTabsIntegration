@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-import re
+import validators
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardRemove
@@ -72,6 +72,7 @@ class UploadProcess(StatesGroup):
     waiting_couchbase_bucket = State()
     waiting_couchbase_query = State()
 
+
     waiting_excel_filepath = State()
     waiting_csv_filepath = State()
 
@@ -103,26 +104,6 @@ SOURCE_PARAMS_ORDER = {
     "csv": ["source_url"],
     # TODO: Добавить сюда порядок параметров для Labguru
 }
-
-URL_REGEX = re.compile(
-    r'^(?:http|https|ftp|sftp|postgres|mysql|sqlite|mssql|redis|mongodb|cassandra|clickhouse|influxdb|elasticsearch|neo4j|couchbase)://'
-    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' 
-    r'localhost|' 
-    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|' 
-    r'\[?[A-F0-9]*:[A-F0-9:]+\]?)' 
-    r'(?::\d+)?' 
-    r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-
-
-def is_valid_url(url: str) -> bool:
-    return bool(URL_REGEX.match(url))
-
-def is_valid_json(json_str: str) -> bool:
-    try:
-        json.loads(json_str)
-        return True
-    except json.JSONDecodeError:
-        return False
 
 @router.message(F.text.lower() == "/cancel", State!S(UploadProcess))
 @router.callback_query(F.data == "cancel", State!S(UploadProcess))
@@ -262,13 +243,9 @@ async def process_saved_source_config_selection(callback: CallbackQuery, state: 
 @router.message(UploadProcess.waiting_pg_url)
 async def process_pg_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL PostgreSQL:")
+    if not validators.url(url):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к PostgreSQL:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL PostgreSQL:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -282,7 +259,6 @@ async def process_pg_query_manual(message: Message, state: FSMContext):
     if not query:
         await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
         return
-    # TODO: Добавить более сложную валидацию запроса (например, синтаксис)
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -293,13 +269,9 @@ async def process_pg_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_mysql_url)
 async def process_mysql_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL MySQL:")
+    if not validators.url(url):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к MySQL:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL MySQL:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -313,7 +285,6 @@ async def process_mysql_query_manual(message: Message, state: FSMContext):
     if not query:
         await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
         return
-    # TODO: Добавить более сложную валидацию запроса
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -325,9 +296,8 @@ async def process_mysql_query_manual(message: Message, state: FSMContext):
 async def process_sqlite_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
     if not url:
-        await message.answer("URL не может быть пустым. Введите URL SQLite:")
+        await message.answer("URL (путь к файлу БД) не может быть пустым. Введите путь к файлу SQLite БД:")
         return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -341,7 +311,6 @@ async def process_sqlite_query_manual(message: Message, state: FSMContext):
     if not query:
         await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
         return
-    # TODO: Добавить более сложную валидацию запроса
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -352,13 +321,9 @@ async def process_sqlite_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_mssql_url)
 async def process_mssql_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL MSSQL:")
+    if not validators.url(url):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к MSSQL:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL MSSQL:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -372,7 +337,6 @@ async def process_mssql_query_manual(message: Message, state: FSMContext):
     if not query:
         await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
         return
-    # TODO: Добавить более сложную валидацию запроса
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -383,13 +347,9 @@ async def process_mssql_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_redis_url)
 async def process_redis_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL Redis:")
+    if not validators.url(url, require_tld=False):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к Redis:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL Redis:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -411,9 +371,8 @@ async def process_redis_pattern_manual(message: Message, state: FSMContext):
 async def process_mongo_uri_manual(message: Message, state: FSMContext):
     uri = message.text.strip()
     if not uri:
-        await message.answer("URI не может быть пустым. Введите URI MongoDB:")
+        await message.answer("URI подключения не может быть пустым. Введите URI подключения к MongoDB:")
         return
-    # TODO: Более строгая валидация URI MongoDB
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = uri
@@ -450,10 +409,9 @@ async def process_mongo_collection_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_cassandra_addresses)
 async def process_cassandra_addresses_manual(message: Message, state: FSMContext):
     addresses = message.text.strip()
-    if not addresses:
+    if not addresses or not any(addr.strip() for addr in addresses.split(',')):
          await message.answer("Адреса узлов не могут быть пустыми. Введите адреса Cassandra/ScyllaDB через запятую:")
          return
-    # TODO: Валидация формата адресов (через запятую)
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = addresses
@@ -480,7 +438,6 @@ async def process_cassandra_query_manual(message: Message, state: FSMContext):
     if not query:
          await message.answer("CQL запрос не может быть пустым. Введите CQL запрос:")
          return
-    # TODO: Добавить более сложную валидацию запроса CQL
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['cassandra_query'] = query
@@ -491,13 +448,9 @@ async def process_cassandra_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_clickhouse_url)
 async def process_clickhouse_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL ClickHouse:")
+    if not validators.url(url, require_tld=False):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к ClickHouse:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL ClickHouse:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -509,9 +462,8 @@ async def process_clickhouse_url_manual(message: Message, state: FSMContext):
 async def process_clickhouse_query_manual(message: Message, state: FSMContext):
     query = message.text.strip()
     if not query:
-         await message.answer("Запрос ClickHouse не может быть пустым. Введите запрос ClickHouse:")
-         return
-    # TODO: Добавить более сложную валидацию запроса ClickHouse
+        await message.answer("Запрос ClickHouse не может быть пустым. Введите запрос ClickHouse:")
+        return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -525,10 +477,6 @@ async def process_influxdb_url_manual(message: Message, state: FSMContext):
     if not url:
          await message.answer("URL не может быть пустым. Введите URL InfluxDB:")
          return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL InfluxDB:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -581,7 +529,6 @@ async def process_influxdb_query_manual(message: Message, state: FSMContext):
     if not query:
          await message.answer("Flux запрос не может быть пустым. Введите Flux запрос InfluxDB:")
          return
-    # TODO: Добавить более сложную валидацию запроса Flux
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['influx_query'] = query
@@ -592,13 +539,9 @@ async def process_influxdb_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_elasticsearch_url)
 async def process_elasticsearch_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not url:
-        await message.answer("URL не может быть пустым. Введите URL Elasticsearch:")
+    if not validators.url(url, require_tld=False):
+        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к Elasticsearch:")
         return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL Elasticsearch:")
-        return
-
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -625,7 +568,9 @@ async def process_elasticsearch_query_manual(message: Message, state: FSMContext
     if not query_str:
         query_str = "{}"
 
-    if not is_valid_json(query_str):
+    try:
+        json.loads(query_str)
+    except json.JSONDecodeError:
         await message.answer("Неверный формат JSON запроса. Пожалуйста, введите валидный JSON или {} для всех записей:")
         return
 
@@ -642,9 +587,6 @@ async def process_neo4j_uri_manual(message: Message, state: FSMContext):
     if not uri:
          await message.answer("URI не может быть пустым. Введите URI Neo4j:")
          return
-    if not is_valid_url(uri):
-        await message.answer("Неверный формат URI. Введите корректный URI Neo4j:")
-        return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = uri
@@ -681,7 +623,6 @@ async def process_neo4j_query_manual(message: Message, state: FSMContext):
     if not query:
          await message.answer("Cypher запрос не может быть пустым. Введите Cypher запрос:")
          return
-    # TODO: Добавить более сложную валидацию Cypher запроса
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_query'] = query
@@ -695,9 +636,6 @@ async def process_couchbase_cluster_url_manual(message: Message, state: FSMConte
     if not url:
          await message.answer("URL кластера не может быть пустым. Введите URL кластера Couchbase:")
          return
-    if not is_valid_url(url):
-        await message.answer("Неверный формат URL. Введите корректный URL кластера Couchbase:")
-        return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
@@ -747,7 +685,6 @@ async def process_couchbase_query_manual(message: Message, state: FSMContext):
     if not query:
          await message.answer("N1QL запрос не может быть пустым. Введите N1QL запрос Couchbase:")
          return
-    # TODO: Добавить более сложную валидацию N1QL запроса
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['couchbase_query'] = query
@@ -758,9 +695,6 @@ async def process_couchbase_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_excel_filepath)
 async def process_excel_filepath_manual(message: Message, state: FSMContext):
     filepath = message.text.strip()
-    if not filepath:
-         await message.answer("Путь к файлу не может быть пустым. Введите полный путь к Excel файлу на сервере бота:")
-         return
     if not Path(filepath).is_file():
          await message.answer("Файл не найден или это не файл. Убедитесь, что путь указан верно и файл доступен на сервере бота. Введите путь к Excel файлу:")
          return
@@ -778,9 +712,6 @@ async def process_excel_filepath_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_csv_filepath)
 async def process_csv_filepath_manual(message: Message, state: FSMContext):
     filepath = message.text.strip()
-    if not filepath:
-         await message.answer("Путь к файлу не может быть пустым. Введите полный путь к CSV файлу на сервере бота:")
-         return
     if not Path(filepath).is_file():
          await message.answer("Файл не найден или это не файл. Убедитесь, что путь указан верно и файл доступен на сервере бота. Введите путь к CSV файлу:")
          return
@@ -859,7 +790,6 @@ async def process_upload_token_manual(message: Message, state: FSMContext):
     if not token:
         await message.answer("Токен не может быть пустым. Введите токен авторизации True Tabs API:")
         return
-    # TODO: Добавить валидацию формата токена API True Tabs
     state_data = await state.get_data()
     current_params = state_data.get('tt_params', {})
     current_params['upload_api_token'] = token
@@ -883,17 +813,13 @@ async def process_datasheet_id_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_field_map_json)
 async def process_field_map_manual(message: Message, state: FSMContext):
     json_str = message.text.strip()
-    if not json_str:
-        await message.answer("Сопоставление Field ID не может быть пустым. Введите сопоставление Field ID в формате JSON строки:")
-        return
-    if not is_valid_json(json_str):
-        await message.answer("Неверный формат JSON для сопоставления Field ID. Ожидается JSON объект, где ключи и значения - строки. Попробуйте снова.")
-        return
-
     try:
         field_map: Dict[str, str] = json.loads(json_str)
         if not isinstance(field_map, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in field_map.items()):
              await message.answer("Неверный формат JSON для сопоставления Field ID. Ожидается JSON объект, где ключи и значения - строки. Попробуйте снова.")
+             return
+        if not field_map:
+             await message.answer("Сопоставление Field ID не может быть пустым. Введите сопоставление Field ID в формате JSON строки:")
              return
 
         state_data = await state.get_data()
@@ -943,7 +869,7 @@ async def process_field_map_manual(message: Message, state: FSMContext):
         await message.answer(confirm_text, reply_markup=upload_confirm_keyboard(), parse_mode='HTML')
 
     except json.JSONDecodeError as e:
-         await message.answer(f"Ошибка парсинга JSON: {e}. Пожалуйста, проверьте формат и попробуйте снова.")
+        await message.answer(f"Ошибка парсинга JSON: {e}. Пожалуйста, проверьте формат и попробуйте снова.")
 
 @router.callback_query(F.data == "confirm_upload", UploadProcess.confirm_parameters)
 async def handle_confirm_upload(callback: CallbackQuery, state: FSMContext, bot: Bot):
