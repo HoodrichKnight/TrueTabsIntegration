@@ -1,6 +1,6 @@
 import aiosqlite
 from datetime import datetime
-from ..config import SQLITE_DB_PATH
+from telegram_bot.config import SQLITE_DB_PATH
 from ..utils.encryption import encrypt_data, decrypt_data
 import json
 import sys

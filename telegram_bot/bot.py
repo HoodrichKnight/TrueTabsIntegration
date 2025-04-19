@@ -6,14 +6,15 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
-from handlers import main_router
+from telegram_bot.handlers import main_router
 from config import BOT_TOKEN, TEMP_FILES_DIR
-from database.sqlite_db import init_db
+from telegram_bot.database.sqlite_db import init_db
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 storage = MemoryStorage() # Используем хранилище состояний в памяти
 

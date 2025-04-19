@@ -18,7 +18,7 @@ async def handle_select_source_callback(callback: CallbackQuery):
 async def handle_source_selected_initiate_fsm(callback: CallbackQuery, state: FSMContext):
     await start_upload_process_fsm(callback, state)
 
-@router.callback_query(F.data == "main_menu", state="*")
+@router.callback_query(F.data == "main_menu")
 async def handle_back_to_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
