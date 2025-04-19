@@ -2,14 +2,16 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from keyboards.inline import main_menu_keyboard
-from utils.rust_executor import execute_rust_command
-from database.sqlite_db import add_upload_record
+from ..keyboards import main_menu_keyboard
+from ..utils.rust_executor import execute_rust_command
+from ..database.sqlite_db import add_upload_record
 import os
+import sys
 import asyncio
 import json
-import config
+from .. import config
 from datetime import datetime
+from typing import Dict, Any
 
 router = Router()
 

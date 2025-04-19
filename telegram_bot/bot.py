@@ -3,12 +3,12 @@ import logging
 import sys
 import os
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from handlers import main_router
-from config import BOT_TOKEN, SQLITE_DB_PATH, TEMP_FILES_DIR
+from config import BOT_TOKEN, TEMP_FILES_DIR
 from database.sqlite_db import init_db
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)

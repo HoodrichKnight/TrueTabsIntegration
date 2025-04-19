@@ -1,17 +1,20 @@
 import json
-from typing import Dict, Any
-
-from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from pathlib import Path
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from keyboards.inline import (
-    main_menu_keyboard, manage_configs_menu_keyboard,
-    manage_source_configs_keyboard, manage_tt_configs_keyboard,
-    list_configs_keyboard, config_actions_keyboard, delete_confirm_keyboard,
-    source_selection_keyboard
+from ..keyboards import (
+    main_menu_keyboard,
+    source_selection_keyboard,
+    manage_configs_menu_keyboard,
+    manage_source_configs_keyboard,
+    manage_tt_configs_keyboard,
+    config_actions_keyboard,
+    delete_confirm_keyboard
 )
-from database import sqlite_db
+from ..database import sqlite_db
 from .upload_handlers import SOURCE_PARAMS_ORDER, is_valid_url, is_valid_json
 
 router = Router()
@@ -333,4 +336,4 @@ async def delete_source_config_handler(callback: CallbackQuery):
     config_name = callback.data.split(":")[1]
     success = await sqlite_db.delete_source_config(config_name)
     if success:
-        await callback.message.edit_text(f"Конфигурация источника '{config_name}' успешно
+        await callback.message.edit_text(f"Конфигурация источника '{config_name}' успешно")

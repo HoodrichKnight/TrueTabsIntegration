@@ -3,21 +3,25 @@ import asyncio
 import json
 import sys
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict
 from pathlib import Path
 import validators
+import re
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from keyboards.inline import (
-    main_menu_keyboard, upload_confirm_keyboard,
-    select_input_method_keyboard, select_config_keyboard
+from aiogram.filters import StateFilter
+from ..keyboards import (
+    main_menu_keyboard,
+    upload_confirm_keyboard,
+    select_input_method_keyboard,
+    select_config_keyboard,
 )
-from utils.rust_executor import execute_rust_command
-from database import sqlite_db
-import config
+from ..utils.rust_executor import execute_rust_command
+from ..database import sqlite_db
+from .. import config
 
 router = Router()
 
@@ -105,8 +109,27 @@ SOURCE_PARAMS_ORDER = {
     # TODO: Добавить сюда порядок параметров для Labguru
 }
 
-@router.message(F.text.lower() == "/cancel", State!S(UploadProcess))
-@router.callback_query(F.data == "cancel", State!S(UploadProcess))
+def is_valid_url(url_string: str) -> bool:
+    """Checks if a string is a valid URL."""
+    # A basic regex for URL validation - can be made more complex if needed
+    url_regex = re.compile(
+        r'^(?:http|ftp)s?://' # http:// or https:// or ftp:// or ftps://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' # domain...
+        r'localhost|' # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ...or ip
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return re.match(url_regex, url_string) is not None
+
+def is_valid_json(json_string: str) -> bool:
+    """Checks if a string is a valid JSON string."""
+    try:
+        json.loads(json_string)
+        return True
+    except json.JSONDecodeError:
+        return False
+
+@router.message(F.text.lower() == "/cancel", StateFilter(UploadProcess))
+@router.callback_query(F.data == "cancel", StateFilter(UploadProcess))
 async def cancel_upload_process(callback_query: CallbackQuery, state: FSMContext):
     await state.clear()
     chat_id = callback_query.message.chat.id if isinstance(callback_query, CallbackQuery) else callback_query.chat.id

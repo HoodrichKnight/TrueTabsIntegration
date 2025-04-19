@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from keyboards.inline import source_selection_keyboard, main_menu_keyboard
+from ..keyboards import source_selection_keyboard, main_menu_keyboard
 from aiogram.fsm.context import FSMContext
 from .upload_handlers import start_upload_process_fsm
 
