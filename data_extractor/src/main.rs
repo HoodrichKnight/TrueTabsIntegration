@@ -67,10 +67,11 @@ struct ExecutionResult {
     extracted_rows: Option<usize>,
     uploaded_records: Option<usize>,
     datasheet_id: Option<String>,
+    extracted_data_preview: Option<JsonValue>,
 }
 
 fn print_json_result(result: ExecutionResult) {
-    let json_output = json!({
+    let mut json_output = json!({
         "status": result.status,
         "message": result.message,
         "file_path": result.file_path.and_then(|p| p.to_str().map(|s| s.to_string())),
@@ -79,7 +80,11 @@ fn print_json_result(result: ExecutionResult) {
         "uploaded_records": result.uploaded_records,
         "datasheet_id": result.datasheet_id,
     });
-    // Выводим JSON в stdout
+
+    if let Some(preview) = result.extracted_data_preview {
+        json_output["extracted_data_preview"] = preview;
+    }
+
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{}", json_output.to_string());
 }
@@ -99,22 +104,22 @@ async fn main() {
             "postgres" => {
                 let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для postgres"))?;
                 let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для postgres"))?;
-                sql::get_postgres_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+                Err(anyhow!("Поддержка Postgres пока не реализована с текущими крейтами"))
             }
             "mysql" => {
                 let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для mysql"))?;
                 let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для mysql"))?;
-                sql::get_mysql_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+                Err(anyhow!("Поддержка MySQL пока не реализована с текущими крейтами"))
             }
             "sqlite" => {
                 let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для sqlite"))?;
                 let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для sqlite"))?;
-                sql::get_sqlite_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+                Err(anyhow!("Поддержка SQLite пока не реализована с текущими крейтами"))
             }
             "mssql" => {
-                let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url для mssql"))?;
+                let db_url = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (строка подключения ADO) для mssql"))?;
                 let query = args.source_query.ok_or_else(|| anyhow!("Не указан --source-query для mssql"))?;
-                sql::get_mssql_pool(&db_url).await.and_then(|pool| sql::extract_from_sql(&pool, &query).await)
+                sql::extract_from_mssql(&db_url, &query).await
             }
             "mongodb" => {
                 let uri = args.source_url.ok_or_else(|| anyhow!("Не указан --source-url (URI) для mongodb"))?;
@@ -184,15 +189,32 @@ async fn main() {
 
         let extracted_rows_count = data.rows.len();
 
+        let data_preview: Vec<HashMap<String, String>> = data.rows.iter()
+            .take(10)
+            .map(|row| {
+                data.headers.iter().enumerate()
+                    .map(|(i, header)| (header.clone(), row.get(i).unwrap_or(&"".to_string()).clone()))
+                    .collect()
+            })
+            .collect();
+
+        let data_preview_json = Some(json!({
+            "headers": data.headers,
+            "rows": data_preview,
+            "total_rows": extracted_rows_count,
+        }));
+
+
         if extracted_rows_count == 0 {
             return Ok(ExecutionResult {
                 status: "SUCCESS".to_string(),
                 message: "Извлечено 0 строк данных. Загрузка не требуется.".to_string(),
-                file_path: None, // Нет данных, нет файла
+                file_path: None,
                 duration_seconds: start_time.elapsed().as_secs_f64(),
                 extracted_rows: Some(0),
                 uploaded_records: Some(0),
                 datasheet_id: datasheet_id_for_result,
+                extracted_data_preview: data_preview_json,
             });
         }
 
@@ -282,9 +304,9 @@ async fn main() {
                 return Err(anyhow!("Ошибка HTTP статуса при загрузке батча: {} - {}", status, response_text));
             }
 
-            // Небольшая задержка между батчами
             sleep(Duration::from_millis(200)).await;
         }
+
 
         Ok(ExecutionResult {
             status: "SUCCESS".to_string(),
@@ -295,6 +317,7 @@ async fn main() {
             extracted_rows: Some(extracted_rows_count),
             uploaded_records: Some(successfully_uploaded_count),
             datasheet_id: datasheet_id_for_result,
+            extracted_data_preview: data_preview_json,
         })
 
     }.await;
@@ -302,7 +325,6 @@ async fn main() {
     let final_result = match result {
         Ok(exec_result) => exec_result,
         Err(e) => {
-            // Ошибка произошла
             ExecutionResult {
                 status: "ERROR".to_string(),
                 message: format!("Ошибка выполнения: {}", e),
@@ -311,9 +333,11 @@ async fn main() {
                 extracted_rows: None,
                 uploaded_records: None,
                 datasheet_id: datasheet_id_for_result,
+                extracted_data_preview: None,
             }
         }
     };
+
     print_json_result(final_result);
 
 }
