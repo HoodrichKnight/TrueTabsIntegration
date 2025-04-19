@@ -3,3 +3,5 @@ aiosqlite==0.*
 openpyxl==3.*
 python-dotenv==1.*
 cryptography==42.*
+validators==0.*
+asyncio==3.4.*

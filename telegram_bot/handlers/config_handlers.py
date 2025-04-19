@@ -1,4 +1,5 @@
 import json
+from typing import Dict, Any
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
@@ -11,7 +12,7 @@ from keyboards.inline import (
     source_selection_keyboard
 )
 from database import sqlite_db
-from .upload_handlers import SOURCE_PARAMS_EXAMPLE
+from .upload_handlers import SOURCE_PARAMS_ORDER, is_valid_url, is_valid_json
 
 router = Router()
 
@@ -45,6 +46,7 @@ async def manage_tt_configs_menu(callback: CallbackQuery):
         reply_markup=manage_tt_configs_keyboard()
     )
     await callback.answer()
+
 
 @router.callback_query(F.data == "add_source_config")
 async def start_add_source_config(callback: CallbackQuery, state: FSMContext):
@@ -87,7 +89,7 @@ async def process_config_name(message: Message, state: FSMContext):
 
     if config_type == 'source':
         await state.set_state(ConfigAddProcess.waiting_source_config_type)
-        await message.answer("Выберите тип источника для этой конфигурации:", reply_markup=source_selection_keyboard()) # Используем клавиатуру выбора источника
+        await message.answer("Выберите тип источника для этой конфигурации:", reply_markup=source_selection_keyboard())
     elif config_type == 'tt':
         tt_params_order = ["upload_api_token", "upload_datasheet_id", "upload_field_map_json"]
         await state.update_data(param_keys_order=tt_params_order, current_param_index=0)
@@ -100,15 +102,16 @@ async def process_source_config_type(callback: CallbackQuery, state: FSMContext)
     source_type = callback.data.split(":")[1]
     await state.update_data(source_type=source_type)
 
-    params_order = SOURCE_PARAMS_EXAMPLE.get(source_type, [])
+    params_order = SOURCE_PARAMS_ORDER.get(source_type, [])
     params_order = [p for p in params_order if p != "source_type"]
+
 
     if not params_order:
         state_data = await state.get_data()
         config_name = state_data['name']
         await sqlite_db.add_source_config(config_name, source_type, {})
         await state.clear()
-        await callback.message.edit_text(f"Конфигурация источника '{config_name}' ({source_type}) успешно добавлена.", reply_markup=manage_source_configs_keyboard())
+        await callback.message.edit_text(f"Конфигурация источника '{config_name}' ({source_type}) успешно добавлена (параметры отсутствуют).", reply_markup=manage_source_configs_keyboard())
         await callback.answer()
         return
 
@@ -120,25 +123,48 @@ async def process_source_config_type(callback: CallbackQuery, state: FSMContext)
 @router.message(ConfigAddProcess.waiting_source_param)
 async def process_source_param(message: Message, state: FSMContext):
     user_input = message.text.strip()
-    # TODO: Добавить валидацию введенного значения в зависимости от текущего параметра
 
     state_data = await state.get_data()
     param_keys_order = state_data['param_keys_order']
     current_param_index = state_data['current_param_index']
     current_params = state_data['current_params']
+    source_type = state_data['source_type']
 
     current_param_key = param_keys_order[current_param_index]
+
+    validation_error = None
+    if not user_input and current_param_key not in ['redis_pattern', 'neo4j_pass', 'couchbase_pass']:
+         validation_error = f"Параметр '{current_param_key}' не может быть пустым."
+    elif current_param_key in ['source_url', 'neo4j_uri', 'couchbase_cluster_url'] and not is_valid_url(user_input):
+         if source_type not in ['sqlite', 'excel', 'csv']:
+             validation_error = f"Неверный формат URL/URI для параметра '{current_param_key}'."
+    elif current_param_key == 'es_query' and not is_valid_json(user_input):
+         validation_error = f"Неверный формат JSON для параметра '{current_param_key}'."
+    elif current_param_key == 'source_url' and source_type in ['excel', 'csv']:
+         if not Path(user_input).is_file():
+              validation_error = f"Файл по пути '{user_input}' не найден или это не файл."
+         elif source_type == 'excel' and not (user_input.lower().endswith('.xlsx') or user_input.lower().endswith('.xls')):
+              validation_error = f"Файл должен быть в формате .xlsx или .xls."
+         elif source_type == 'csv' and not user_input.lower().endswith('.csv'):
+              validation_error = f"Файл должен быть в формате .csv."
+
+
+    if validation_error:
+         await message.answer(f"Ошибка валидации: {validation_error}\nПожалуйста, введите параметр '{current_param_key}' снова:")
+         return
+
     current_params[current_param_key] = user_input
+    await state.update_data(current_params=current_params)
 
     next_param_index = current_param_index + 1
 
     if next_param_index < len(param_keys_order):
-        await state.update_data(current_params=current_params, current_param_index=next_param_index)
+        await state.update_data(current_param_index=next_param_index)
         next_param_key = param_keys_order[next_param_index]
+        await state.set_state(ConfigAddProcess.waiting_source_param)
         await message.answer(f"Введите параметр '{next_param_key}':")
     else:
         config_name = state_data['name']
-        source_type = state_data['source_type']
         await sqlite_db.add_source_config(config_name, source_type, current_params)
         await state.clear()
         await message.answer(f"Конфигурация источника '{config_name}' ({source_type}) успешно добавлена.", reply_markup=manage_source_configs_keyboard())
@@ -146,7 +172,6 @@ async def process_source_param(message: Message, state: FSMContext):
 @router.message(ConfigAddProcess.waiting_tt_param)
 async def process_tt_param(message: Message, state: FSMContext):
     user_input = message.text.strip()
-    # TODO: Добавить валидацию введенного значения
 
     state_data = await state.get_data()
     param_keys_order = state_data['param_keys_order']
@@ -154,6 +179,30 @@ async def process_tt_param(message: Message, state: FSMContext):
     current_params = state_data['current_params']
 
     current_param_key = param_keys_order[current_param_index]
+
+    validation_error = None
+    if not user_input and current_param_key != 'upload_field_map_json':
+        validation_error = f"Параметр '{current_param_key}' не может быть пустым."
+    elif current_param_key == 'upload_datasheet_id' and not user_input.startswith("dst"):
+        validation_error = "Неверный формат Datasheet ID. Он должен начинаться с 'dst'."
+    elif current_param_key == 'upload_field_map_json':
+        if not user_input:
+            user_input = "{}"
+        if not is_valid_json(user_input):
+             validation_error = f"Неверный формат JSON для параметра '{current_param_key}'."
+        else:
+             try:
+                 field_map = json.loads(user_input)
+                 if not isinstance(field_map, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in field_map.items()):
+                     validation_error = "Неверная структура JSON для сопоставления Field ID. Ожидается объект { \"header\": \"field_id\" }."
+             except:
+                 validation_error = f"Неверный формат JSON для параметра '{current_param_key}'."
+
+
+    if validation_error:
+         await message.answer(f"Ошибка валидации: {validation_error}\nПожалуйста, введите параметр '{current_param_key}' снова:")
+         return
+
     current_params[current_param_key] = user_input
 
     next_param_index = current_param_index + 1
@@ -161,21 +210,18 @@ async def process_tt_param(message: Message, state: FSMContext):
     if next_param_index < len(param_keys_order):
         await state.update_data(current_params=current_params, current_param_index=next_param_index)
         next_param_key = param_keys_order[next_param_index]
+        await state.set_state(ConfigAddProcess.waiting_tt_param)
         await message.answer(f"Введите параметр '{next_param_key}':")
     else:
         config_name = state_data['name']
-        if all(key in current_params for key in ["upload_api_token", "upload_datasheet_id", "upload_field_map_json"]):
-             await sqlite_db.add_tt_config(
-                 config_name,
-                 current_params["upload_api_token"],
-                 current_params["upload_datasheet_id"],
-                 current_params["upload_field_map_json"]
-             )
-             await state.clear()
-             await message.answer(f"Конфигурация True Tabs '{config_name}' успешно добавлена.", reply_markup=manage_tt_configs_keyboard())
-        else:
-             await state.clear()
-             await message.answer("Ошибка: Не все обязательные параметры True Tabs были собраны. Начните заново.", reply_markup=manage_tt_configs_keyboard())
+        await sqlite_db.add_tt_config(
+            config_name,
+            current_params.get("upload_api_token"),
+            current_params.get("upload_datasheet_id"),
+            current_params.get("upload_field_map_json", "{}")
+        )
+        await state.clear()
+        await message.answer(f"Конфигурация True Tabs '{config_name}' успешно добавлена.", reply_markup=manage_tt_configs_keyboard())
 
 @router.callback_query(F.data == "list_source_configs")
 async def list_source_configs_handler(callback: CallbackQuery):
@@ -193,7 +239,6 @@ async def list_source_configs_handler(callback: CallbackQuery):
         builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_source_configs"))
         keyboard = builder.as_markup()
 
-
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
@@ -208,11 +253,10 @@ async def list_tt_configs_handler(callback: CallbackQuery):
         builder = InlineKeyboardBuilder()
         for config in configs:
              text += f"- {config['name']} (Datasheet ID: {config['upload_datasheet_id']})\n"
-             builder.row(InlineKeyboardButton(text=f"🔧 {config['name']}", callback_data=f"tt_config_actions:{config['name']}")) # Кнопка действия
+             builder.row(InlineKeyboardButton(text=f"🔧 {config['name']}", callback_data=f"tt_config_actions:{config['name']}"))
 
         builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_tt_configs"))
         keyboard = builder.as_markup()
-
 
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
@@ -229,7 +273,6 @@ async def source_config_actions_handler(callback: CallbackQuery):
         details_text += f"Запрос: <code>{config.get('source_query', 'N/A')}</code>\n"
         if config.get('specific_params'):
              details_text += f"Спец. параметры: <pre><code class=\"language-json\">{json.dumps(config['specific_params'], indent=2, ensure_ascii=False)}</code></pre>\n"
-
 
         await callback.message.edit_text(
             details_text,
@@ -290,17 +333,4 @@ async def delete_source_config_handler(callback: CallbackQuery):
     config_name = callback.data.split(":")[1]
     success = await sqlite_db.delete_source_config(config_name)
     if success:
-        await callback.message.edit_text(f"Конфигурация источника '{config_name}' успешно удалена.", reply_markup=manage_source_configs_keyboard())
-    else:
-        await callback.message.edit_text(f"Ошибка при удалении конфигурации источника '{config_name}'.", reply_markup=manage_source_configs_keyboard())
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("delete_tt_config:"))
-async def delete_tt_config_handler(callback: CallbackQuery):
-    config_name = callback.data.split(":")[1]
-    success = await sqlite_db.delete_tt_config(config_name)
-    if success:
-        await callback.message.edit_text(f"Конфигурация True Tabs '{config_name}' успешно удалена.", reply_markup=manage_tt_configs_keyboard())
-    else:
-        await callback.message.edit_text(f"Ошибка при удалении конфигурации True Tabs '{config_name}'.", reply_markup=manage_tt_configs_keyboard())
-    await callback.answer()
+        await callback.message.edit_text(f"Конфигурация источника '{config_name}' успешно
