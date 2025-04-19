@@ -6,24 +6,28 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 bigdecimal = "0.4"
-bson = "2.0"
-calamine = "0.20"
-cdrs = { version = "4.0.0-beta.1", features = ["tokio", "uuid"] }
+bson = "2.0" # Для MongoDB требуется крейт bson
+# calamine = "0.20" # Для Excel/ODS файлов <--- Закомментируйте эту строку
+# cdrs = { version = "4.0.0-beta.1", features = ["tokio", "uuid"] } # Временно отключен (Cassandra)
 clap = { version = "4.0", features = ["derive"] }
-clickhouse-rs = { version = "1.1.0-alpha.1" }
-chrono = { version = "0.4", features = ["serde"] }
-csv = "1.1"
-dotenv = "0.15"
-elasticsearch = { version = "8.17.0-alpha.1" }
-influxdb-client = "0.1.4"
-mongodb = "2.6"
-neo4rs = "0.7"
-redis = { version = "0.24", features = ["tokio-comp"] }
-reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
-rust_xlsxwriter = "0.60"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "macros", "postgres", "mysql", "sqlite", "uuid", "json", "chrono", "bigdecimal", "_sqlite-bundled"] }
-tiberius = { version = "0.6", features = ["tokio"] }
-tokio = { version = "1", features = ["full"] }
-uuid = { version = "1.4", features = ["serde", "v4"] }
+clickhouse-rs = { version = "1.1.0-alpha.1" } # Для ClickHouse
+# couchbase = { version = "1.0.0-alpha.4" } # Временно отключен (Couchbase)
+chrono = { version = "0.4", features = ["serde"] } # Для работы с датами/временем, добавляем фичу serde
+csv = "1.1" # Для CSV файлов
+dotenv = "0.15" # Для загрузки переменных окружения
+elasticsearch = { version = "8.17.0-alpha.1" } # Для Elasticsearch
+futures = "0.3" # Добавляем futures для работы с асинхронными стримами/трейтами
+influxdb-client = "0.1.4" # Для InfluxDB (устаревшая версия для обхода конфликта)
+mongodb = "2.6" # Для MongoDB
+# neo4rs = "0.7" # Для Neo4j <--- Временно отключен (Neo4j)
+redis = { version = "0.24", features = ["tokio-comp"] } # Для Redis
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] } # Для HTTP запросов (True Tabs API)
+rust_xlsxwriter = "0.60" # Для создания XLSX файлов
+serde = { version = "1.0", features = ["derive"] } # Для сериализации/десериализации
+serde_json = "1.0" # Для работы с JSON
+# Используем sqlx для других SQL баз
+sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "macros", "postgres", "mysql", "sqlite", "uuid", "json", "chrono", "bigdecimal"] }
+# tiberius = { version = "0.6", features = ["tokio"] } # Временно отключен (MSSQL)
+tokio = { version = "1", features = ["full"] } # Асинхронный рантайм
+tokio-util = { version = "0.7", features = ["compat"] } # Версия 0.7 с фичой compat
+uuid = { version = "1.4", features = ["serde", "v4"] } # Для UUID
