@@ -13,7 +13,7 @@ use influxdb_client_rust::{Client as InfluxClient, models::{Query as InfluxQuery
 use elasticsearch::{Elasticsearch, SearchParts};
 use serde_json::{json, Value as JsonValue};
 use neo4rs::{query, Graph};
-use couchbase::{Cluster, ClusterOptions, QueryOptions, QueryResult};
+// use couchbase::{Cluster, ClusterOptions, QueryOptions, QueryResult};
 
 pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str) -> Result<ExtractedData> {
     println!("Подключение к MongoDB: {}", uri);
@@ -318,7 +318,7 @@ pub async fn extract_from_neo4j(uri: &str, user: &str, password: &str, query: &s
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn extract_from_couchbase(cluster_url: &str, user: &str, password: &str, bucket_name: &str, query: &str) -> Result<ExtractedData> {
+/* pub async fn extract_from_couchbase(cluster_url: &str, user: &str, password: &str, bucket_name: &str, query: &str) -> Result<ExtractedData> {
     println!("Подключение к Couchbase кластеру: {}", cluster_url);
     let cluster = Cluster::connect(cluster_url, ClusterOptions::default().authenticate(user, password)).await?;
     let bucket = cluster.bucket(bucket_name)?;
@@ -368,4 +368,4 @@ pub async fn extract_from_couchbase(cluster_url: &str, user: &str, password: &st
     }
 
     Ok(ExtractedData { headers, rows: data_rows })
-}
+} */
