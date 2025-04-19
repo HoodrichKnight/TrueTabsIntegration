@@ -11,6 +11,8 @@ use sqlx::{
 use sqlx::types::JsonValue;
 use sqlx::types::chrono::{NaiveDateTime};
 use sqlx::types::BigDecimal;
+use sqlx::Error as SqlxError;
+
 
 use tiberius::{Client, Config, Row as TiberiusRow, error::Error as TiberiusError};
 use tokio::net::TcpStream;
@@ -55,13 +57,13 @@ where
     for<'a> <DB as Database>::Row: FromRow<'a, DB>,
     for<'a> &'a str: ColumnIndex<<DB as Database>::Row>,
     usize: ColumnIndex<<DB as Database>::Row>,
-    String: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    i64: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    f64: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    bool: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    JsonValue: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    NaiveDateTime: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    BigDecimal: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<String>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<i64>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<f64>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<bool>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<JsonValue>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<NaiveDateTime>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    Option<BigDecimal>: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
 {
     println!("Выполнение SQL запроса: {}", query);
     let rows: Vec<DB::Row> = sqlx::query(query)
@@ -86,7 +88,7 @@ where
             } else if let Ok(Some(b_val)) = row.try_get::<Option<bool>, usize>(i) {
                 b_val.to_string()
             } else if let Ok(Some(json_val)) = row.try_get::<Option<JsonValue>, usize>(i) {
-                json_val.to_string() // Или как-то иначе форматировать JSON
+                json_val.to_string()
             } else if let Ok(Some(dt_val)) = row.try_get::<Option<NaiveDateTime>, usize>(i) {
                 dt_val.to_string()
             } else if let Ok(Some(bd_val)) = row.try_get::<Option<BigDecimal>, usize>(i) {
@@ -125,7 +127,6 @@ pub async fn extract_from_mssql(database_url: &str, query: &str) -> Result<Extra
     println!("Подключение к MSSQL успешно установлено.");
     println!("Выполнение MSSQL запроса: {}", query);
 
-    // Выполняем запрос
     let mut stream = client.simple_query(query).await
         .map_err(|e| anyhow!("Ошибка выполнения MSSQL запроса: {}", e))?
         .into_stream();

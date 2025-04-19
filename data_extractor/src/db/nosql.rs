@@ -5,14 +5,15 @@ use futures::{TryStreamExt, StreamExt};
 use mongodb::{Client as MongoClient, bson::{Document, Bson}, options::ClientOptions};
 use futures::stream::TryStream;
 
-use redis::{Client as RedisClient, AsyncCommands};
+use redis::{Client as RedisClient, AsyncCommands, RedisError};
 
-use cdrs::{cluster::TcpCluster, authenticators::NoneAuthenticator};
-use cdrs::query::QueryExecutor;
-use cdrs::types::rows::Row as CdrsRow;
-use uuid::Uuid;
+use cdrs::{cluster::TcpCluster, authenticators::NoneAuthenticator}; // Используем cdrs::cluster::TcpCluster
+use cdrs::query::QueryExecutor; // Трейт для выполнения запросов
+use cdrs::types::rows::Row as CdrsRow; // Переименовываем Row, чтобы не конфликтовать
+use cdrs::types::from_cdrs::FromCdrsBy; // Используем FromCdrsBy для получения значений из Row
+use uuid::Uuid; // Uuid для Cassandra, если используется тип UUID
 
-use clickhouse_rs::{Client as ClickhouseClient};
+use clickhouse_rs::{Client as ClickhouseClient, types::{Value, ValueRef}};
 
 use influxdb_client::{Client as InfluxClient, models::{Query as InfluxQuery, Record as InfluxRecord}};
 
@@ -20,8 +21,7 @@ use elasticsearch::{Elasticsearch, http::transport::{Transport, SingleNodeConnec
 use serde_json::{json, Value as JsonValue};
 
 use neo4rs::{Graph, config::Config as Neo4jConfig};
-
-use neo4rs::Row as Neo4jRow;
+use neo4rs::Row as Neo4jRow; // Переименовываем Row
 
 use super::ExtractedData;
 
@@ -64,9 +64,8 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
                 Some(Bson::Decimal128(d)) => d.to_string(),
                 Some(Bson::Null) => "".to_string(),
                 Some(Bson::Array(arr)) => format!("{:?}", arr),
-                Some(Bson::Document(doc)) => format!("{:?}", doc), // Просто строковое представление для вложенных документов
-                // Добавьте другие типы Bson по мере необходимости
-                _ => "".to_string(), // Значение отсутствует или другого типа
+                Some(Bson::Document(doc)) => format!("{:?}", doc),
+                _ => "".to_string(),
             };
             current_row_data.push(string_value);
         }
@@ -85,7 +84,7 @@ pub async fn extract_from_redis(url: &str, key_pattern: &str) -> Result<Extracte
 
     println!("Извлечение ключей по паттерну: '{}'...", key_pattern);
 
-    let keys: Vec<String> = con.keys(key_pattern).await?;
+    let keys: Vec<String> = con.keys(key_pattern).await.map_err(|e| anyhow!("Ошибка получения ключей Redis: {}", e))?;
 
     if keys.is_empty() {
         println!("Не найдено ключей, соответствующих паттерну.");
@@ -96,7 +95,7 @@ pub async fn extract_from_redis(url: &str, key_pattern: &str) -> Result<Extracte
     let mut data_rows: Vec<Vec<String>> = Vec::new();
 
     for key in keys {
-        let value: String = con.get(&key).await?;
+        let value: String = con.get(&key).await.map_err(|e| anyhow!("Ошибка получения значения для ключа '{}': {}", key, e))?;
         data_rows.push(vec![key, value]);
     }
 
@@ -127,8 +126,11 @@ pub async fn extract_from_cassandra(addresses: &str, keyspace: &str, query: &str
 
     let data_rows: Vec<Vec<String>> = rows.into_iter().map(|row| {
         headers.iter().map(|header| {
-            let value_option = row.get_value(header).and_then(|v| v.as_cow_str().map(|cow| cow.into_owned()));
-            value_option.unwrap_or_else(|| "".to_string())
+            let value_option = row.get_r_by_name::<cdrs::types::value::Value>(header);
+            value_option
+                .ok()
+                .and_then(|val| val.as_cow_str().map(|cow| cow.into_owned()))
+                .unwrap_or_else(|| "".to_string())
         }).collect()
     }).collect();
 
@@ -138,7 +140,7 @@ pub async fn extract_from_cassandra(addresses: &str, keyspace: &str, query: &str
 
 pub async fn extract_from_clickhouse(url: &str, query: &str) -> Result<ExtractedData> {
     println!("Подключение к ClickHouse...");
-    let client = ClickhouseClient::new(url.parse()?); // parse url
+    let client = ClickhouseClient::new(url.parse()?);
     println!("Подключение к ClickHouse успешно установлено.");
 
     println!("Выполнение ClickHouse запроса: {}", query);
@@ -182,30 +184,24 @@ pub async fn extract_from_influxdb(
     query: &str,
 ) -> Result<ExtractedData> {
     println!("Подключение к InfluxDB...");
-    let client = InfluxClient::new(url, token).unwrap();
+
+    let client = InfluxClient::new(url, token).map_err(|e| anyhow!("Ошибка создания InfluxDB клиента: {}", e))?; // Handle error from new
 
     println!("Подключение к InfluxDB успешно установлено.");
     println!("Выполнение Flux запроса для org '{}', bucket '{}'...", org, bucket);
 
     let influx_query = InfluxQuery::from(query);
-    let records = client.query(&influx_query, bucket, org).await?;
+    let records = client.query(&influx_query, bucket, org).await.map_err(|e| anyhow!("Ошибка выполнения Flux запроса: {}", e))?;
+
 
     if records.is_empty() {
         println!("Flux запрос вернул 0 записей.");
         return Ok(ExtractedData { headers: vec![], rows: vec![] });
     }
 
-    let mut headers: Vec<String> = Vec::new();
-    let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_extracted = false;
-
-    for record in records {
-        let mut current_row_data: Vec<String> = Vec::new();
-        let mut current_row_headers: Vec<String> = Vec::new();
-
-        println!("Предупреждение: Парсинг результатов InfluxDB из версии 0.1.x API не реализован.");
-        return Ok(ExtractedData { headers: vec![], rows: vec![] });
-    }
+    println!("Предупреждение: Парсинг результатов InfluxDB из версии 0.1.x API не реализован. Требуется адаптация кода.");
+    println!("Извлечено {} записей, но парсинг не выполнен.", records.len());
+    Ok(ExtractedData { headers: vec![], rows: vec![] })
 
 }
 
@@ -234,7 +230,7 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue
             if let Some(source) = hit["_source"].as_object() {
                 if !headers_extracted {
                     headers = source.keys().map(|key| key.to_string()).collect();
-                    headers.sort(); // Сортируем заголовки
+                    headers.sort();
                     headers_extracted = true;
                 }
 
@@ -257,8 +253,7 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue
 
 pub async fn extract_from_neo4j(uri: &str, user: &str, pass: &str, query: &str) -> Result<ExtractedData> {
     println!("Подключение к Neo4j...");
-    // Neo4jConfig::new требует user и pass
-    let neo4j_config = Neo4jConfig::new(uri, user, pass);
+    let neo4j_config = Neo4jConfig::new(uri, user, pass)?;
     let graph = Graph::connect(neo4j_config).await?;
     println!("Подключение к Neo4j успешно установлено.");
 
@@ -266,11 +261,9 @@ pub async fn extract_from_neo4j(uri: &str, user: &str, pass: &str, query: &str) 
 
     let mut result_stream = graph.execute(neo4rs::query(query)).await?;
 
-
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
     let mut headers_extracted = false;
-
     while let Some(row_result) = result_stream.next().await {
         let row: Neo4jRow = row_result?;
 
@@ -281,7 +274,10 @@ pub async fn extract_from_neo4j(uri: &str, user: &str, pass: &str, query: &str) 
 
         let mut current_row_data: Vec<String> = Vec::new();
         for header in &headers {
-            let string_value = row.get::<String>(header).unwrap_or_else(|| "".to_string());
+            let string_value = row.get::<String>(header)
+                .map(|s| s.unwrap_or_else(|| "".to_string()))
+                .unwrap_or_else(|_| "".to_string());
+
             current_row_data.push(string_value);
         }
         data_rows.push(current_row_data);
