@@ -1,132 +1,185 @@
 use anyhow::{Result, anyhow};
-use sqlx::{Executor, FromRow, postgres::PgPool, mysql::MySqlPool, sqlite::SqlitePool, mssql::MssqlPool, Row, Column};
-use crate::db::ExtractedData;
+use std::{collections::HashMap, time::Duration};
+use sqlx::{
+    Executor, Pool, FromRow, Row, Column,
+    postgres::PgPool,
+    mysql::MySqlPool,
+    sqlite::SqlitePool,
+    PgPoolOptions, MySqlPoolOptions, SqlitePoolOptions,
+    Arguments, Database, Type, Decode, ColumnIndex
+};
+use sqlx::types::JsonValue;
+use sqlx::types::chrono::{NaiveDateTime};
+use sqlx::types::BigDecimal;
 
-pub async fn extract_from_sql<DB>(pool: &sqlx::Pool<DB>, query: &str) -> Result<ExtractedData>
+use tiberius::{Client, Config, Row as TiberiusRow, error::Error as TiberiusError};
+use tokio::net::TcpStream;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use futures::{TryStreamExt, StreamExt};
+
+use super::ExtractedData;
+
+pub async fn get_postgres_pool(database_url: &str) -> Result<PgPool> {
+    println!("Подключение к PostgreSQL...");
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(database_url)
+        .await?;
+    println!("Подключение к PostgreSQL успешно установлено.");
+    Ok(pool)
+}
+
+pub async fn get_mysql_pool(database_url: &str) -> Result<MySqlPool> {
+    println!("Подключение к MySQL...");
+    let pool = MySqlPoolOptions::new()
+        .max_connections(5)
+        .connect(database_url)
+        .await?;
+    println!("Подключение к MySQL успешно установлено.");
+    Ok(pool)
+}
+
+pub async fn get_sqlite_pool(database_url: &str) -> Result<SqlitePool> {
+    println!("Подключение к SQLite...");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    println!("Подключение к SQLite успешно установлено.");
+    Ok(pool)
+}
+
+pub async fn extract_from_sql<DB>(pool: &Pool<DB>, query: &str) -> Result<ExtractedData>
 where
-    DB: sqlx::Database,
-    for<'a> (usize, sqlx::database::Row<'a, DB>): sqlx::ColumnIndex<sqlx::database::Row<'a, DB>>,
-    for<'a> String: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<String>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> i32: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<i32>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> i64: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<i64>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> f32: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<f32>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> f64: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<f64>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> bool: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<bool>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> sqlx::types::chrono::NaiveDateTime: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<sqlx::types::chrono::NaiveDateTime>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> sqlx::types::uuid::Uuid: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<sqlx::types::uuid::Uuid>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> sqlx::types::BigDecimal: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<sqlx::types::BigDecimal>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> sqlx::types::JsonValue: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
-    for<'a> Option<sqlx::types::JsonValue>: sqlx::types::Type<DB> + sqlx::decode::Decode<'a, DB>,
+    DB: Database,
+    for<'a> <DB as Database>::Row: FromRow<'a, DB>,
+    for<'a> &'a str: ColumnIndex<<DB as Database>::Row>,
+    usize: ColumnIndex<<DB as Database>::Row>,
+    String: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    i64: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    f64: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    bool: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    JsonValue: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    NaiveDateTime: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    BigDecimal: for<'a> sqlx::Type<DB> + sqlx::Decode<'a, DB>,
 {
     println!("Выполнение SQL запроса: {}", query);
-    let rows = sqlx::query(query)
+    let rows: Vec<DB::Row> = sqlx::query(query)
         .fetch_all(pool)
         .await?;
 
-    let mut headers: Vec<String> = Vec::new();
-    let mut data_rows: Vec<Vec<String>> = Vec::new();
-
     if rows.is_empty() {
-        println!("Запрос вернул пустой результат.");
-        return Ok(ExtractedData { headers, rows: data_rows });
+        println!("Запрос вернул 0 строк.");
+        return Ok(ExtractedData { headers: vec![], rows: vec![] });
     }
 
-    if let Some(first_row) = rows.first() {
-        for column in first_row.columns() {
-            headers.push(column.name().to_string());
-        }
-    }
+    let headers: Vec<String> = rows[0].columns().iter().map(|col| col.name().to_string()).collect();
 
-    for row in rows {
-        let mut row_values: Vec<String> = Vec::new();
-        for i in 0..row.columns().len() {
-            let value_str = match row.try_get_unchecked::<Option<String>>(i) {
-                Ok(Some(s)) => s,
-                Ok(None) => "".to_string(),
-                Err(_) => {
-                    match row.try_get_unchecked::<Option<i64>>(i) {
-                        Ok(Some(n)) => n.to_string(),
-                        Ok(None) => "".to_string(),
-                        Err(_) => {
-                            match row.try_get_unchecked::<Option<f64>>(i) {
-                                Ok(Some(f)) => f.to_string(),
-                                Ok(None) => "".to_string(),
-                                Err(_) => {
-                                    match row.try_get_unchecked::<Option<bool>>(i) {
-                                        Ok(Some(b)) => b.to_string(),
-                                        Ok(None) => "".to_string(),
-                                        Err(_) => {
-                                            match row.try_get_unchecked::<Option<sqlx::types::chrono::NaiveDateTime>>(i) {
-                                                Ok(Some(d)) => d.to_string(),
-                                                Ok(None) => "".to_string(),
-                                                Err(_) => {
-                                                    match row.try_get_unchecked::<Option<sqlx::types::uuid::Uuid>>(i) {
-                                                        Ok(Some(u)) => u.to_string(),
-                                                        Ok(None) => "".to_string(),
-                                                        Err(_) => {
-                                                            match row.try_get_unchecked::<Option<sqlx::types::BigDecimal>>(i) {
-                                                                Ok(Some(bd)) => bd.to_string(),
-                                                                Ok(None) => "".to_string(),
-                                                                Err(_) => {
-                                                                    match row.try_get_unchecked::<Option<sqlx::types::JsonValue>>(i) {
-                                                                        Ok(Some(json_val)) => json_val.to_string(),
-                                                                        Ok(None) => "".to_string(),
-                                                                        Err(_) => {
-                                                                            eprintln!("Предупреждение: Не удалось извлечь значение колонки {} как известный тип. Попытка использовать Debug.", i);
-                                                                            match row.try_get_unchecked::<sqlx::ValueRef>(i) {
-                                                                                Ok(val_ref) => format!("{:?}", val_ref),
-                                                                                Err(_) => "[UNSUPPORTED TYPE]".to_string(),
-                                                                            }
-
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    let data_rows: Vec<Vec<String>> = rows.into_iter().map(|row| {
+        headers.iter().enumerate().map(|(i, header)| {
+            let string_value = if let Ok(Some(s)) = row.try_get::<Option<String>, usize>(i) {
+                s
+            } else if let Ok(Some(i_val)) = row.try_get::<Option<i64>, usize>(i) {
+                i_val.to_string()
+            } else if let Ok(Some(f_val)) = row.try_get::<Option<f64>, usize>(i) {
+                f_val.to_string()
+            } else if let Ok(Some(b_val)) = row.try_get::<Option<bool>, usize>(i) {
+                b_val.to_string()
+            } else if let Ok(Some(json_val)) = row.try_get::<Option<JsonValue>, usize>(i) {
+                json_val.to_string() // Или как-то иначе форматировать JSON
+            } else if let Ok(Some(dt_val)) = row.try_get::<Option<NaiveDateTime>, usize>(i) {
+                dt_val.to_string()
+            } else if let Ok(Some(bd_val)) = row.try_get::<Option<BigDecimal>, usize>(i) {
+                bd_val.to_string()
+            }
+            else {
+                "".to_string()
             };
-            row_values.push(value_str);
-        }
-        data_rows.push(row_values);
-    }
+            string_value
+        }).collect()
+    }).collect();
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn get_postgres_pool(db_url: &str) -> Result<PgPool> {
-    println!("Подключение к PostgreSQL...");
-    PgPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к PostgreSQL: {}", e))
+fn parse_tiberius_config(database_url: &str) -> Result<Config, TiberiusError> {
+    Config::from_ado_string(database_url)
 }
 
-pub async fn get_mysql_pool(db_url: &str) -> Result<MySqlPool> {
-    println!("Подключение к MySQL...");
-    MySqlPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к MySQL: {}", e))
-}
 
-pub async fn get_sqlite_pool(db_url: &str) -> Result<SqlitePool> {
-    println!("Подключение к SQLite...");
-    SqlitePool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к SQLite: {}", e))
-}
-
-pub async fn get_mssql_pool(db_url: &str) -> Result<MssqlPool> {
+pub async fn extract_from_mssql(database_url: &str, query: &str) -> Result<ExtractedData> {
     println!("Подключение к MSSQL...");
-    MssqlPool::connect(db_url).await.map_err(|e| anyhow!("Ошибка подключения к MSSQL: {}", e))
+
+    let config = parse_tiberius_config(database_url)
+        .map_err(|e| anyhow!("Ошибка парсинга строки подключения MSSQL: {}", e))?;
+
+    let tcp = TcpStream::connect(config.get_addr()).await
+        .map_err(|e| anyhow!("Ошибка TCP подключения к MSSQL {}: {}", config.get_addr(), e))?;
+    tcp.set_nodelay(true).map_err(|e| anyhow!("Ошибка set_nodelay для MSSQL TCP: {}", e))?;
+
+    let tcp = tcp.compat();
+
+    let mut client = Client::connect(config, tcp).await
+        .map_err(|e| anyhow!("Ошибка подключения к MSSQL: {}", e))?;
+
+    println!("Подключение к MSSQL успешно установлено.");
+    println!("Выполнение MSSQL запроса: {}", query);
+
+    // Выполняем запрос
+    let mut stream = client.simple_query(query).await
+        .map_err(|e| anyhow!("Ошибка выполнения MSSQL запроса: {}", e))?
+        .into_stream();
+
+    let mut headers: Vec<String> = Vec::new();
+    let mut data_rows: Vec<Vec<String>> = Vec::new();
+    let mut headers_extracted = false;
+
+    while let Some(item) = stream.next().await {
+        let row: TiberiusRow = item.map_err(|e| anyhow!("Ошибка получения строки из MSSQL результата: {}", e))?;
+
+        if !headers_extracted {
+            headers = row.columns().iter().map(|col| col.name().to_string()).collect();
+            headers_extracted = true;
+        }
+
+        let mut current_row_data: Vec<String> = Vec::new();
+        for col_value in row.iter() {
+            let string_value = match col_value.to_owned() {
+                Some(tiberius::Value::Sn(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::TinyInt(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::SmallInt(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Int(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::BigInt(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Float(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Real(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::F64(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Numeric(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Bit(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::String(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Raw(val)) => val.map_or("".to_string(), |v| format!("{:?}", v)),
+                Some(tiberius::Value::Binary(val)) => val.map_or("".to_string(), |v| format!("{:?}", v)),
+                Some(tiberius::Value::Guid(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Time(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::Date(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::DateTime(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::DateTime2(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::DateTimeOffset(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::SmallDateTime(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                Some(tiberius::Value::UnalignedDateTime(val)) => val.map_or("".to_string(), |v| format!("{:?}", v)),
+                Some(tiberius::Value::Xml(val)) => val.map_or("".to_string(), |v| v.to_string()),
+                None => "".to_string(),
+            };
+            current_row_data.push(string_value);
+        }
+        data_rows.push(current_row_data);
+    }
+
+
+    if !headers_extracted && data_rows.is_empty() {
+        println!("MSSQL запрос вернул 0 строк.");
+        Ok(ExtractedData { headers: vec![], rows: vec![] })
+    } else {
+        println!("MSSQL запрос успешно выполнен. Извлечено {} строк.", data_rows.len());
+        Ok(ExtractedData { headers, rows: data_rows })
+    }
 }
