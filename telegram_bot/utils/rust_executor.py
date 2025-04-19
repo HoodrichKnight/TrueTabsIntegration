@@ -1,4 +1,3 @@
-# telegram_bot/utils/rust_executor.py
 import subprocess
 import shlex
 import asyncio
