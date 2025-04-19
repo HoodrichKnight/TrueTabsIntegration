@@ -1,371 +1,311 @@
 use anyhow::{Result, anyhow};
-use std::time::Duration;
-use crate::db::ExtractedData;
+use std::collections::HashMap;
+use futures::{TryStreamExt, StreamExt};
 
-use mongodb::{Client as MongoClient, options::ClientOptions as MongoOptions, bson::Document as MongoDocument};
+use mongodb::{Client as MongoClient, bson::{Document, Bson}, options::ClientOptions};
+use futures::stream::TryStream;
+
 use redis::{Client as RedisClient, AsyncCommands};
-use cdrs::{frame::IntoBytes, query::QueryExecutor, types::IntoCdrsBy};
-use cdrs_tokio::cluster::TcpCluster;
-use cdrs_tokio::authenticators::NoneAuthenticator;
+
+use cdrs::{cluster::TcpCluster, authenticators::NoneAuthenticator};
+use cdrs::query::QueryExecutor;
 use cdrs::types::rows::Row as CdrsRow;
-use clickhouse_rs::{Client as ClickhouseClient, types::Row as ChRow};
-use influxdb_client_rust::{Client as InfluxClient, models::{Query as InfluxQuery, Record as InfluxRecord}};
-use elasticsearch::{Elasticsearch, SearchParts};
+use uuid::Uuid;
+
+use clickhouse_rs::{Client as ClickhouseClient};
+
+use influxdb_client::{Client as InfluxClient, models::{Query as InfluxQuery, Record as InfluxRecord}};
+
+use elasticsearch::{Elasticsearch, http::transport::{Transport, SingleNodeConnectionPool}};
 use serde_json::{json, Value as JsonValue};
-use neo4rs::{query, Graph};
-// use couchbase::{Cluster, ClusterOptions, QueryOptions, QueryResult};
+
+use neo4rs::{Graph, config::Config as Neo4jConfig};
+
+use neo4rs::Row as Neo4jRow;
+
+use super::ExtractedData;
 
 pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str) -> Result<ExtractedData> {
-    println!("Подключение к MongoDB: {}", uri);
-    let client_options = MongoOptions::parse(uri).await?;
+    println!("Подключение к MongoDB...");
+    let client_options = ClientOptions::parse(uri).await?;
     let client = MongoClient::with_options(client_options)?;
-    let db = client.database(db_name);
-    let collection = db.collection::<MongoDocument>(collection_name);
+    println!("Подключение к MongoDB успешно установлено.");
 
-    println!("Извлечение данных из коллекции MongoDB: {}", collection_name);
+    let db = client.database(db_name);
+    let collection = db.collection::<Document>(collection_name);
+
+    println!("Извлечение из коллекции '{}' в БД '{}'...", collection_name, db_name);
+
     let mut cursor = collection.find(None, None).await?;
 
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_collected = false;
+    let mut headers_extracted = false;
 
-    while let Some(doc) = cursor.next().await.transpose()? {
-        if !headers_collected {
-            headers = doc.keys().cloned().collect();
+    while let Some(result) = cursor.next().await {
+        let doc = result?;
+
+        if !headers_extracted {
+            headers = doc.keys().map(|key| key.to_string()).collect();
             headers.sort();
-            headers_collected = true;
+            headers_extracted = true;
         }
 
-        let mut row_values: Vec<String> = Vec::new();
+        let mut current_row_data: Vec<String> = Vec::new();
         for header in &headers {
-            let value = doc.get(header);
-            let value_str = match value {
-                Some(bson::Bson::String(s)) => s.clone(),
-                Some(bson::Bson::Int32(i) | bson::Bson::Int64(i)) => i.to_string(),
-                Some(bson::Bson::Double(d)) => d.to_string(),
-                Some(bson::Bson::Boolean(b)) => b.to_string(),
-                Some(bson::Bson::DateTime(dt)) => dt.to_string(),
-                Some(bson::Bson::ObjectId(oid)) => oid.to_string(),
-                Some(bson::Bson::Decimal128(d)) => d.to_string(),
-                Some(bson::Bson::Null) => "".to_string(),
-                Some(bson::Bson::Array(arr)) => format!("{:?}", arr),
-                Some(bson::Bson::Document(doc)) => format!("{:?}", doc),
-                Some(_) => "[UNSUPPORTED BSON TYPE]".to_string(),
-                None => "".to_string(),
+            let string_value = match doc.get(header) {
+                Some(Bson::String(s)) => s.clone(),
+                Some(Bson::Int32(i)) => i.to_string(),
+                Some(Bson::Int64(i)) => i.to_string(),
+                Some(Bson::Double(d)) => d.to_string(),
+                Some(Bson::Boolean(b)) => b.to_string(),
+                Some(Bson::DateTime(dt)) => dt.to_string(),
+                Some(Bson::ObjectId(oid)) => oid.to_string(),
+                Some(Bson::Decimal128(d)) => d.to_string(),
+                Some(Bson::Null) => "".to_string(),
+                Some(Bson::Array(arr)) => format!("{:?}", arr),
+                Some(Bson::Document(doc)) => format!("{:?}", doc), // Просто строковое представление для вложенных документов
+                // Добавьте другие типы Bson по мере необходимости
+                _ => "".to_string(), // Значение отсутствует или другого типа
             };
-            row_values.push(value_str);
+            current_row_data.push(string_value);
         }
-
-        data_rows.push(row_values);
+        data_rows.push(current_row_data);
     }
+
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
 pub async fn extract_from_redis(url: &str, key_pattern: &str) -> Result<ExtractedData> {
-    println!("Подключение к Redis: {}", url);
+    println!("Подключение к Redis...");
     let client = RedisClient::open(url)?;
     let mut con = client.get_async_connection().await?;
+    println!("Подключение к Redis успешно установлено.");
 
-    println!("Сканирование ключей в Redis с паттерном: {}", key_pattern);
+    println!("Извлечение ключей по паттерну: '{}'...", key_pattern);
 
-    let mut iter: redis::AsyncIter<String> = con.scan(key_pattern).await?;
+    let keys: Vec<String> = con.keys(key_pattern).await?;
 
-    let headers = vec!["Key".to_string(), "Type".to_string(), "Value".to_string(), "Score/Details".to_string()];
+    if keys.is_empty() {
+        println!("Не найдено ключей, соответствующих паттерну.");
+        return Ok(ExtractedData { headers: vec![], rows: vec![] });
+    }
+
+    let mut headers = vec!["Key".to_string(), "Value".to_string()];
     let mut data_rows: Vec<Vec<String>> = Vec::new();
 
-    while let Some(key) = iter.next_item().await? {
-        let key_type: String = con.type_of(&key).await?;
-        let mut row_values = vec![key.clone(), key_type.clone()];
-        let mut value_str = "".to_string();
-        let mut details_str = "".to_string();
-
-        match key_type.as_str() {
-            "string" => {
-                value_str = con.get(&key).await?;
-            },
-            "hash" => {
-                let hash_fields: Vec<(String, String)> = con.hgetall(&key).await?;
-                value_str = format!("{{{}}}", hash_fields.into_iter().map(|(f, v)| format!("{}: {}", f, v)).collect::<Vec<_>>().join(", "));
-            },
-            "list" => {
-                let list_values: Vec<String> = con.lrange(&key, 0, -1).await?;
-                value_str = format!("[{}]", list_values.join(", "));
-            },
-            "set" => {
-                let set_values: Vec<String> = con.smembers(&key).await?;
-                value_str = format!("{{{}}}", set_values.join(", "));
-            },
-            "zset" => {
-                let zset_values: Vec<(String, f64)> = con.zrange_withscores(&key, 0, -1).await?;
-                value_str = format!("[{}]", zset_values.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>().join(", "));
-                details_str = format!("[{}]", zset_values.iter().map(|(_, s)| s.to_string()).collect::<Vec<_>>().join(", "));
-            },
-            "none" => {
-                value_str = "[KEY NOT FOUND]".to_string();
-            }
-            _ => {
-                value_str = "[UNSUPPORTED REDIS TYPE]".to_string();
-            }
-        }
-        row_values.push(value_str);
-        row_values.push(details_str);
-
-        data_rows.push(row_values);
+    for key in keys {
+        let value: String = con.get(&key).await?;
+        data_rows.push(vec![key, value]);
     }
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
 pub async fn extract_from_cassandra(addresses: &str, keyspace: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к Cassandra/ScyllaDB: {}", addresses);
-    let authenticator = NoneAuthenticator {};
-    let tcp_cluster = TcpCluster::new(addresses.split(',').collect::<Vec<_>>(), authenticator)?;
-    let cluster_manager = tcp_cluster.connect().await?;
-    let session = cluster_manager.user_session().await.expect("Session should be created");
+    println!("Подключение к Cassandra...");
+    let nodes: Vec<String> = addresses.split(',').map(|s| s.trim().to_string()).collect();
+
+    let cluster = TcpCluster::new(nodes, NoneAuthenticator {}).await?;
+    let mut session = cluster.connect(keyspace).await?;
+    println!("Подключение к Cassandra успешно установлено.");
 
     println!("Выполнение CQL запроса: {}", query);
-    let query_obj = cdrs::query::Query::new(query);
-    let result = session.query(query_obj).await?;
 
-    let mut headers: Vec<String> = Vec::new();
-    let mut data_rows: Vec<Vec<String>> = Vec::new();
+    let rows: Vec<CdrsRow> = session.query_async(query, ()).await?
+        .response_body()?.ok_or_else(|| anyhow!("Нет тела ответа"))?.rows()?
+        .into_iter().collect();
 
-    if let Some(body) = result.into_body() {
-        if let Some(rows_content) = body.rows_content {
-            if let Some(ref metadata) = body.metadata {
-                if let Some(ref col_specs) = metadata.col_specs {
-                    headers = col_specs.iter().map(|cs| cs.name.to_string()).collect();
-                }
-            }
 
-            for row in rows_content {
-                let mut row_values: Vec<String> = Vec::new();
-                for column in row.columns {
-                    let value_str = match column.value {
-                        Some(bytes) => {
-                            String::from_utf8(bytes.into_bytes()).unwrap_or_else(|_| "[NON-UTF8 DATA]".to_string())
-                        },
-                        None => "".to_string(),
-                    };
-                    row_values.push(value_str);
-                }
-                data_rows.push(row_values);
-            }
-        }
-    } else {
-        println!("CQL запрос вернул пустой результат.");
+    if rows.is_empty() {
+        println!("CQL запрос вернул 0 строк.");
+        return Ok(ExtractedData { headers: vec![], rows: vec![] });
     }
+
+    let headers: Vec<String> = rows[0].columns.iter().map(|col| col.name.clone()).collect();
+
+    let data_rows: Vec<Vec<String>> = rows.into_iter().map(|row| {
+        headers.iter().map(|header| {
+            let value_option = row.get_value(header).and_then(|v| v.as_cow_str().map(|cow| cow.into_owned()));
+            value_option.unwrap_or_else(|| "".to_string())
+        }).collect()
+    }).collect();
+
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
 pub async fn extract_from_clickhouse(url: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к ClickHouse: {}", url);
-    let client = ClickhouseClient::connect(url).await?;
+    println!("Подключение к ClickHouse...");
+    let client = ClickhouseClient::new(url.parse()?); // parse url
+    println!("Подключение к ClickHouse успешно установлено.");
 
     println!("Выполнение ClickHouse запроса: {}", query);
-    let rows = client.query(query).fetch_all().await?;
+
+    let mut stream = client.query(query).stream();
 
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
+    let mut headers_extracted = false;
 
-    if rows.is_empty() {
-        println!("ClickHouse запрос вернул пустой результат.");
-        return Ok(ExtractedData { headers, rows: data_rows });
-    }
-
-    headers = rows.columns().iter().map(|c| c.name().to_string()).collect();
-
-    for row_index in 0..rows.len() {
-        let mut row_values: Vec<String> = Vec::new();
-        for col_index in 0..rows.columns().len() {
-            let value_ref = rows[row_index].get::<clickhouse_rs::types::SqlType, _>(col_index)?;
-            let value_str = format!("{}", value_ref);
-
-            row_values.push(value_str);
+    while let Some(block) = stream.next().await.transpose()? {
+        if !headers_extracted {
+            headers = block.columns().iter().map(|col| col.name().to_string()).collect();
+            headers_extracted = true;
         }
-        data_rows.push(row_values);
+
+        for row in block.rows() {
+            let mut current_row_data: Vec<String> = Vec::new();
+            for value in row.iter() {
+                let string_value = value.as_sql()?;
+                current_row_data.push(string_value);
+            }
+            data_rows.push(current_row_data);
+        }
     }
 
-    Ok(ExtractedData { headers, rows: data_rows })
+    if !headers_extracted && data_rows.is_empty() {
+        println!("ClickHouse запрос вернул 0 строк.");
+        Ok(ExtractedData { headers: vec![], rows: vec![] })
+    } else {
+        println!("ClickHouse запрос успешно выполнен. Извлечено {} строк.", data_rows.len());
+        Ok(ExtractedData { headers, rows: data_rows })
+    }
 }
 
-pub async fn extract_from_influxdb(url: &str, token: &str, org: &str, bucket: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к InfluxDB: {}", url);
-    let client = InfluxClient::new(url, token)?;
+pub async fn extract_from_influxdb(
+    url: &str,
+    token: &str,
+    org: &str,
+    bucket: &str,
+    query: &str,
+) -> Result<ExtractedData> {
+    println!("Подключение к InfluxDB...");
+    let client = InfluxClient::new(url, token).unwrap();
 
-    println!("Выполнение Flux запроса: {}", query);
-    let query_api = client.query_api();
-    let mut tables = query_api.query(org, query).await?;
+    println!("Подключение к InfluxDB успешно установлено.");
+    println!("Выполнение Flux запроса для org '{}', bucket '{}'...", org, bucket);
+
+    let influx_query = InfluxQuery::from(query);
+    let records = client.query(&influx_query, bucket, org).await?;
+
+    if records.is_empty() {
+        println!("Flux запрос вернул 0 записей.");
+        return Ok(ExtractedData { headers: vec![], rows: vec![] });
+    }
 
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_collected = false;
+    let mut headers_extracted = false;
 
-    while let Some(table) = tables.next().await {
-        let table = table?;
+    for record in records {
+        let mut current_row_data: Vec<String> = Vec::new();
+        let mut current_row_headers: Vec<String> = Vec::new();
 
-        for record in table.records {
-            if !headers_collected {
-                headers = record.columns.iter().map(|col| col.label.clone()).collect();
-                headers_collected = true;
-            }
-
-            let mut row_values: Vec<String> = Vec::new();
-            for header in &headers {
-                let value = record.value(header.as_str());
-                let value_str = match value {
-                    Some(val) => format!("{}", val),
-                    None => "".to_string(),
-                };
-                row_values.push(value_str);
-            }
-            data_rows.push(row_values);
-        }
+        println!("Предупреждение: Парсинг результатов InfluxDB из версии 0.1.x API не реализован.");
+        return Ok(ExtractedData { headers: vec![], rows: vec![] });
     }
 
-    if !headers_collected {
-        println!("Flux запрос вернул пустой результат.");
-    }
-
-    Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn extract_from_elasticsearch(url: &str, index: &str, query_body: JsonValue) -> Result<ExtractedData> {
-    println!("Подключение к Elasticsearch: {}", url);
-    let client = Elasticsearch::new(elasticsearch::http::transport::TransportBuilder::new(elasticsearch::http::Url::parse(url)?).build()?);
+pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue) -> Result<ExtractedData> {
+    println!("Подключение к Elasticsearch...");
+    let transport = Transport::single_node(url)?;
+    let client = Elasticsearch::new(transport);
+    println!("Подключение к Elasticsearch успешно установлено.");
 
-    println!("Выполнение Elasticsearch запроса для индекса {}: {}", index, serde_json::to_string(&query_body)?);
+    println!("Извлечение из индекса '{}' с запросом: {}", index, query);
 
-    let search_response = client.search(SearchParts::Index(&[index]))
-        .body(query_body)
+    let search_response = client
+        .search(elasticsearch::SearchParts::Index(&[index]))
+        .body(&query)
         .send()
+        .await?
+        .json::<JsonValue>()
         .await?;
 
-    let response_body = search_response.json::<JsonValue>().await?;
-
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_collected = false;
+    let mut headers_extracted = false;
 
-    if let Some(hits) = response_body["hits"]["hits"].as_array() {
+    if let Some(hits) = search_response["hits"]["hits"].as_array() {
         for hit in hits {
-            let mut current_headers = vec!["_id".to_string()];
-            let mut current_row_values = vec![hit.get("_id").and_then(|id| id.as_str()).unwrap_or("").to_string()];
-
-            if let Some(source) = hit.get("_source").and_then(|s| s.as_object()) {
-
-                if !headers_collected {
-                    let mut source_keys: Vec<String> = source.keys().cloned().collect();
-                    source_keys.sort();
-                    headers = current_headers.into_iter().chain(source_keys.into_iter()).collect();
-                    headers_collected = true;
+            if let Some(source) = hit["_source"].as_object() {
+                if !headers_extracted {
+                    headers = source.keys().map(|key| key.to_string()).collect();
+                    headers.sort(); // Сортируем заголовки
+                    headers_extracted = true;
                 }
 
-                let mut row_values: Vec<String> = current_row_values;
-                for header in headers.iter().skip(1) {
-                    let value = source.get(header.as_str());
-                    let value_str = match value {
-                        Some(val) => val.to_string(),
-                        None => "".to_string(),
-                    };
-                    row_values.push(value_str);
+                let mut current_row_data: Vec<String> = Vec::new();
+                for header in &headers {
+                    let string_value = source.get(header)
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .or_else(|| source.get(header).map(|v| v.to_string()))
+                        .unwrap_or_else(|| "".to_string());
+                    current_row_data.push(string_value);
                 }
-                data_rows.push(row_values);
-            } else {
-                if !headers_collected {
-                    headers = current_headers;
-                    headers_collected = true;
-                }
-                data_rows.push(current_row_values);
+                data_rows.push(current_row_data);
             }
         }
-    } else {
-        println!("Elasticsearch запрос не вернул хиты.");
     }
+
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn extract_from_neo4j(uri: &str, user: &str, password: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к Neo4j: {}", uri);
-    let graph = Graph::connect(uri, user, password).await?;
+pub async fn extract_from_neo4j(uri: &str, user: &str, pass: &str, query: &str) -> Result<ExtractedData> {
+    println!("Подключение к Neo4j...");
+    // Neo4jConfig::new требует user и pass
+    let neo4j_config = Neo4jConfig::new(uri, user, pass);
+    let graph = Graph::connect(neo4j_config).await?;
+    println!("Подключение к Neo4j успешно установлено.");
 
     println!("Выполнение Cypher запроса: {}", query);
-    let mut result = graph.execute(query!(query)).await?;
+
+    let mut result_stream = graph.execute(neo4rs::query(query)).await?;
+
 
     let mut headers: Vec<String> = Vec::new();
     let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_collected = false;
+    let mut headers_extracted = false;
 
-    while let Ok(Some(row)) = result.next().await {
-        let mut row_values: Vec<String> = Vec::new();
-        let values: Vec<neo4rs::types::Value> = row.collect();
+    while let Some(row_result) = result_stream.next().await {
+        let row: Neo4jRow = row_result?;
 
-        if !headers_collected {
-            headers = (0..values.len()).map(|i| format!("Column{}", i + 1)).collect();
-            headers_collected = true;
+        if !headers_extracted {
+            headers = row.keys().iter().map(|key| key.to_string()).collect();
+            headers_extracted = true;
         }
 
-        for value in values.into_iter() {
-            row_values.push(format!("{}", value));
+        let mut current_row_data: Vec<String> = Vec::new();
+        for header in &headers {
+            let string_value = row.get::<String>(header).unwrap_or_else(|| "".to_string());
+            current_row_data.push(string_value);
         }
-
-        data_rows.push(row_values);
+        data_rows.push(current_row_data);
     }
 
-    Ok(ExtractedData { headers, rows: data_rows })
+
+    if !headers_extracted && data_rows.is_empty() {
+        println!("Cypher запрос вернул 0 строк.");
+        Ok(ExtractedData { headers: vec![], rows: vec![] })
+    } else {
+        println!("Cypher запрос успешно выполнен. Извлечено {} строк.", data_rows.len());
+        Ok(ExtractedData { headers, rows: data_rows })
+    }
 }
 
-/* pub async fn extract_from_couchbase(cluster_url: &str, user: &str, password: &str, bucket_name: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к Couchbase кластеру: {}", cluster_url);
-    let cluster = Cluster::connect(cluster_url, ClusterOptions::default().authenticate(user, password)).await?;
-    let bucket = cluster.bucket(bucket_name)?;
-    let collection = bucket.default_collection();
 
-    println!("Выполнение N1QL запроса: {}", query);
-    let result: QueryResult = cluster.query(query, QueryOptions::default()).await?;
-
-    let mut headers: Vec<String> = Vec::new();
-    let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_collected = false;
-
-    let mut rows = result.rows::<JsonValue>();
-    while let Some(row_result) = rows.next().await {
-        let row_json = row_result?;
-
-        if let Some(row_object) = row_json.as_object() {
-            if !headers_collected {
-                headers = row_object.keys().cloned().collect();
-                headers.sort();
-                headers_collected = true;
-            }
-
-            let mut row_values: Vec<String> = Vec::new();
-            for header in &headers {
-                let value = row_object.get(header);
-                let value_str = match value {
-                    Some(val) => val.to_string(),
-                    None => "".to_string(),
-                };
-                row_values.push(value_str);
-            }
-            data_rows.push(row_values);
-
-        } else {
-            eprintln!("Предупреждение: Получена строка результата N1QL, которая не является JSON объектом: {:?}", row_json);
-        }
-
-    }
-
-    if !headers_collected && !data_rows.is_empty() {
-        if let Some(first_data_row) = data_rows.first() {
-            if headers.is_empty() {
-                headers = (0..first_data_row.len()).map(|i| format!("Column{}", i + 1)).collect();
-            }
-        }
-    }
-
-    Ok(ExtractedData { headers, rows: data_rows })
-} */
+// // Couchbase (временно отключен)
+// pub async fn extract_from_couchbase(
+//     cluster_url: &str,
+//     user: &str,
+//     pass: &str,
+//     bucket_name: &str,
+//     query: &str,
+// ) -> Result<ExtractedData> {
+//     println!("Подключение к Couchbase...");
+//     Err(anyhow!("Поддержка Couchbase временно отключена из-за проблем сборки."))
+// }
