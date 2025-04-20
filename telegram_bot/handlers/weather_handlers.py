@@ -28,9 +28,12 @@ from apscheduler.jobstores.base import JobLookupError
 # Assuming scheduler is initialized somewhere globally or imported
 try:
     scheduler = AsyncIOScheduler()
-    scheduler.start()
+    # Do not start scheduler here to avoid RuntimeError: no running event loop
+    # scheduler.start()
 except Exception as e:
     scheduler = None
+    import logging
+    logger = logging.getLogger(__name__)
     logger.error(f"Failed to initialize scheduler in weather_handlers: {e}")
 
 
@@ -210,10 +213,6 @@ def format_weather_data(data: Dict[str, Any], period: str = "now") -> str:
             text += f"Прогноз на следующий час ({dt_txt}): {temp}°C, {desc}, Ветер: {wind_speed} м/с"
         else:
             text += "Прогноз на следующий час недоступен."
-
-        else: # Should not happen
-            text += "Неподдерживаемый период прогноза."
-
 
         # Add note about API limitations if applicable
         if days > 5 and period in ['7d', '30d']: # Assuming 5-day limit for free API

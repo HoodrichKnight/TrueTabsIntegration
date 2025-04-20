@@ -40,7 +40,7 @@ def source_selection_keyboard() -> InlineKeyboardMarkup:
     sources = [
         ("PostgreSQL", "postgres"), ("MySQL", "mysql"), ("SQLite", "sqlite"),
         ("MongoDB", "mongodb"), ("Redis", "redis"), ("Elasticsearch", "elasticsearch"),
-        ("CSV файл", "csv"), ("Excel файл", "excel"),
+        ("CSV файл", "csv"),
     ]
     for text, source_type in sources:
         builder.button(text=text, callback_data=f"start_upload_process:{source_type}")
@@ -137,6 +137,9 @@ def select_config_keyboard(configs: List[Dict[str, Any]], callback_prefix: str) 
         for config in configs:
             text = config['name']
             if config.get('source_type'):
+                 # Remove Excel file from display
+                 if config['source_type'].lower() == 'excel':
+                     continue
                  text += f" ({config['source_type']})"
             elif config.get('upload_datasheet_id'):
                  text += f" (Datasheet ID: {config['upload_datasheet_id']})"
@@ -199,29 +202,6 @@ def confirm_schedule_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="✅ Подтвердить и создать", callback_data="confirm_create_schedule"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
-    )
-    return builder.as_markup()
-
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="⚙️ Выбрать источник данных", callback_data="select_source")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📊 История загрузок", callback_data="view_history:0")
-    )
-    builder.row(
-        InlineKeyboardButton(text="💾 Сохраненные конфигурации", callback_data="manage_configs")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📅 Запланированные задания", callback_data="manage_schedules")
-    )
-    # --- NEW Button for Weather ---
-    builder.row(
-        InlineKeyboardButton(text="☀️ Погода", callback_data="weather_menu")
-    )
-    builder.row(
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
     )
     return builder.as_markup()

@@ -51,12 +51,12 @@ async def main() -> None:
 
     # Подключение роутеров
     dp.include_router(main_router)
-    dp.include_router(weather_handlers.router)
-    dp.include_router(upload_handlers.router)
-    dp.include_router(history_handlers.router)
-    dp.include_router(config_handlers.router)
+    # dp.include_router(weather_handlers.router) # Удалено, чтобы избежать дублирования
+    # dp.include_router(upload_handlers.router) # Удалено, чтобы избежать дублирования
+    # dp.include_router(history_handlers.router) # Удалено, чтобы избежать дублирования
+    # dp.include_router(config_handlers.router) # Удалено, чтобы избежать дублирования
     # Подключаем роутер для UI управления расписанием
-    dp.include_router(scheduled_handlers.router) # НОВАЯ СТРОКА
+    # dp.include_router(scheduled_handlers.router) # Удалено, т.к. уже включен в main_router
 
 
     await init_db()

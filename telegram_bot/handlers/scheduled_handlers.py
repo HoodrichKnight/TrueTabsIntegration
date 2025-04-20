@@ -109,9 +109,46 @@ async def scheduled_task_executor(
 
 
 
-# --- Handlers for Schedule Management Menu (without changes) ---
-# @router.callback_query(F.data == "manage_schedules") async def manage_schedules_menu_handler(...): ...
-# @router.callback_query(F.data == "list_schedules") async def list_schedules_handler(...): ...
+@router.callback_query(F.data == "manage_schedules")
+async def manage_schedules_menu_handler(callback: CallbackQuery):
+    """
+    Handler for the "Запланированные задания" button.
+    Shows the main menu for managing scheduled jobs.
+    """
+    await callback.message.edit_text(
+        "Меню управления запланированными заданиями:",
+        reply_markup=manage_schedules_menu_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "list_schedules")
+async def list_schedules_handler(callback: CallbackQuery):
+    """
+    Handler to list all scheduled jobs for the user.
+    """
+    chat_id = callback.message.chat.id
+    jobs = await sqlite_db.list_scheduled_jobs(chat_id)
+
+    if not jobs:
+        await callback.message.edit_text(
+            "У вас нет запланированных заданий.",
+            reply_markup=manage_schedules_menu_keyboard()
+        )
+        await callback.answer()
+        return
+
+    # Build a list of jobs with buttons to view details
+    builder = InlineKeyboardBuilder()
+    for job in jobs:
+        builder.button(text=job.get('name', 'Без имени'), callback_data=f"view_schedule_details:{job.get('job_id')}")
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="manage_schedules"))
+    await callback.message.edit_text(
+        "Ваши запланированные задания:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
 @router.callback_query(F.data.startswith("view_schedule_details:"))
 async def view_schedule_details_handler(callback: CallbackQuery):
     """
@@ -283,7 +320,7 @@ async def edit_field_selection_handler(callback: CallbackQuery, state: FSMContex
             await callback.message.edit_text("Введите новое Cron выражение (например, `0 * * * *`):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_edit")]]))
             await state.set_state(ScheduleProcess.waiting_cron_args)
         elif current_trigger_type == 'date':
-            await callback.message.edit_text("Введите новую дату и время в формате `YYYY-MM-DD HH:MM:SS`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_edit")]]))
+            await callback.message.edit_text("Введите дату и время в формате `YYYY-MM-DD HH:MM:SS`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_edit")]]))
             await state.set_state(ScheduleProcess.waiting_date_args)
         else:
             await callback.message.edit_text("Неизвестный тип триггера. Отмена.", reply_markup=manage_schedules_menu_keyboard())
@@ -531,6 +568,9 @@ async def process_schedule_source_config_selection(callback: CallbackQuery, stat
         state_data = await state.get_data()
         schedule_name = state_data.get('schedule_name', 'Без имени')
         schedule_action = state_data.get('schedule_action', 'Без действия')
+        schedule_source_config_name = state_data.get('schedule_source_config_name', 'Без источника')
+        schedule_tt_config_name = state_data.get('schedule_tt_config_name', 'Без TT')
+
         await callback.message.edit_text(
             f"Задание: <b>{schedule_name}</b> ({schedule_action})\nИсточник: <b>{source_config_name}</b>\nВыберите сохраненную конфигурацию True Tabs:",
             reply_markup=select_config_keyboard(tt_configs, 'schedule_tt_select'),
@@ -735,10 +775,7 @@ async def process_cron_args(message: Message, state: FSMContext):
     # Save cron expression in trigger args as dict with key 'cron_expression'
     await state.update_data(schedule_trigger_args={'cron_expression': cron_expression})
 
-    # Transition to confirmation state
-    await state.set_state(ScheduleProcess.confirm_schedule)
-
-    # Show confirmation message
+    #
     state_data = await state.get_data()
     schedule_name = state_data.get('schedule_name', 'Без имени')
     schedule_action = state_data.get('schedule_action', 'Без действия')
@@ -948,288 +985,3 @@ async def confirm_schedule_handler(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
         await state.clear() # Очищаем FSM состояние
         await callback.answer("Произошла ошибка при добавлении в расписание.")
-@router.callback_query(F.data == "confirm_create_schedule", ScheduleProcess.confirm_schedule)
-async def confirm_schedule_handler(callback: CallbackQuery, state: FSMContext):
-    global scheduler  # moved global declaration to be the first statement in the function
-
-    """
-    Handles the confirmation to create the scheduled job.
-    Saves to DB and adds to APScheduler.
-    """
-
-    # Проверяем, что планировщик инициализирован
-    if scheduler is None:
-        error_msg = "Ошибка: Планировщик недоступен. Перезапустите бота."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=main_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка планировщика.")
-        return
-
-    # Получаем все собранные данные из FSM состояния
-    state_data = await state.get_data()
-    job_name = state_data.get('schedule_name')
-    chat_id = state_data.get('chat_id')
-    source_config_name = state_data.get('schedule_source_config_name')
-    tt_config_name = state_data.get('schedule_tt_config_name')
-    action = state_data.get('schedule_action')
-    trigger_type = state_data.get('schedule_trigger_type')
-    trigger_args = state_data.get('schedule_trigger_args') # Распарсенные аргументы (словарь)
-
-    # Валидация: убедимся, что все необходимые данные собраны
-    # trigger_args может быть пустым словарем для некоторых триггеров, поэтому проверяем не None
-    if not all([job_name, chat_id, source_config_name, tt_config_name, action, trigger_type, trigger_args is not None]):
-        error_msg = "Ошибка: Недостаточно данных для создания задания. Пожалуйста, начните заново."
-        print(f"Неполные данные в состоянии для создания задания: {state_data}", file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Недостаточно данных.")
-        return
-
-    # Генерируем уникальный ID задания для APScheduler и базы данных
-    job_id = str(uuid.uuid4())
-
-    # Создаем объект триггера APScheduler из собранных данных
-    trigger = None
-    try:
-        if trigger_type == 'interval':
-             # Создаем IntervalTrigger из словаря аргументов
-             trigger = IntervalTrigger(**trigger_args)
-        elif trigger_type == 'cron':
-             # Аргументы для CronTrigger будут строкой (cron expression)
-             cron_expression = trigger_args.get('cron_expression') # Предполагаем такой ключ
-             if not cron_expression: raise ValueError("Cron expression is missing.")
-             trigger = CronTrigger.from_crontab(cron_expression) # Или CronTrigger(**args)
-        elif trigger_type == 'date':
-             # Аргументы для DateTrigger будут дата и время (например, строка в ISO формате)
-             run_date_str = trigger_args.get('run_date') # Предполагаем такой ключ
-             if not run_date_str: raise ValueError("Run date is missing.")
-             run_date = datetime.fromisoformat(run_date_str) # Парсим строку даты
-             trigger = DateTrigger(run_date=run_date)
-
-        if trigger is None:
-             # Если тип триггера неизвестен или логика создания отсутствует
-             raise ValueError(f"Неподдерживаемый или неполностью реализованный тип триггера: {trigger_type}")
-
-    except Exception as e:
-        # Обработка ошибок при создании объекта триггера (например, неверные аргументы)
-        error_msg = f"Ошибка при создании расписания для задания '{job_name}': {e}. Задание не создано."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка создания триггера.")
-        return
-
-
-    # Сохраняем запланированное задание в базу данных
-    # Аргументы триггера сохраняем как JSON строку
-    trigger_args_json_str = json.dumps(trigger_args)
-    db_success = await sqlite_db.add_scheduled_job(
-        job_id=job_id, # Уникальный ID задания
-        name=job_name, # Имя задания
-        chat_id=chat_id, # ID чата пользователя
-        source_config_name=source_config_name, # Имя конфига источника
-        tt_config_name=tt_config_name, # Имя конфига TT
-        action=action, # Действие
-        trigger_type=trigger_type, # Тип триггера
-        trigger_args_json=trigger_args_json_str # Аргументы триггера как JSON строка
-    )
-
-    # Проверяем успешность сохранения в БД
-    if not db_success:
-        error_msg = f"Ошибка при сохранении задания '{job_name}' в базу данных. Возможно, имя задания уже занято (хотя мы проверяли ранее)."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка сохранения в БД.")
-        return
-
-    # Добавляем запланированное задание в экземпляр планировщика APScheduler
-    try:
-        scheduler.add_job(
-            scheduled_task_executor, # Функция, которую вызовет планировщик при срабатывании триггера
-            trigger=trigger, # Созданный объект триггера
-            id=job_id, # Используем тот же уникальный ID задания, что и в БД
-            name=job_name, # Имя задания
-            kwargs={ # Аргументы, которые будут переданы в scheduled_task_executor при вызове
-                'bot': callback.bot, # Передаем экземпляр бота из callback_data!
-                'chat_id': chat_id,
-                'source_config_name': source_config_name,
-                'tt_config_name': tt_config_name,
-                'action': action,
-                'job_name': job_name # Передаем имя задания для удобства в scheduled_task_executor
-            },
-            # replace_existing=False по умолчанию, что подходит для добавления нового уникального задания
-        )
-        logging.info(f"Запланированное задание '{job_name}' (ID: {job_id}) успешно добавлено в планировщик.")
-
-        # Отправляем пользователю сообщение об успешном создании задания
-        await callback.message.edit_text(
-            f"✅ Запланированное задание '{job_name}' успешно создано и добавлено в расписание!",
-            reply_markup=manage_schedules_menu_keyboard() # Возвращаемся в меню управления расписанием
-        )
-        # Очищаем FSM состояние после успешного создания задания
-        await state.clear()
-        await callback.answer("Задание успешно создано.")
-
-    except Exception as e:
-        # Обработка ошибок, если не удалось добавить задание в планировщик (например, проблема с хранилищем или триггером)
-        print(f"Ошибка при добавлении задания '{job_name}' в планировщик: {e}", file=sys.stderr)
-        # Если не удалось добавить в планировщик, нужно попытаться удалить запись из БД,
-        # чтобы не было "фантомных" заданий, которые есть в БД, но не в расписании.
-        db_delete_success = await sqlite_db.delete_scheduled_job(job_id)
-        if db_delete_success:
-            print(f"Задание '{job_name}' (ID: {job_id}) удалено из БД после ошибки добавления в планировщик.", file=sys.stderr)
-            error_msg = f"Ошибка при добавлении задания '{job_name}' в расписание: {e}. Оно было удалено из базы данных для избежания расхождений."
-        else:
-             error_msg = f"Ошибка при добавлении задания '{job_name}' в расписание: {e}. Также произошла ошибка при попытке удалить запись из базы данных. Возможны расхождения."
-             print(f"Критическая ошибка: Ошибка удаления задания '{job_name}' (ID: {job_id}) из БД после ошибки добавления в планировщик.", file=sys.stderr)
-
-        # Отправляем сообщение об ошибке пользователю
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear() # Очищаем FSM состояние
-        await callback.answer("Произошла ошибка при добавлении в расписание.")
-    """
-    Handles the confirmation to create the scheduled job.
-    Saves to DB and adds to APScheduler.
-    """
-    # Получаем глобальный экземпляр планировщика
-    global scheduler
-
-    # Проверяем, что планировщик инициализирован
-    if scheduler is None:
-        error_msg = "Ошибка: Планировщик недоступен. Перезапустите бота."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=main_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка планировщика.")
-        return
-
-    # Получаем все собранные данные из FSM состояния
-    state_data = await state.get_data()
-    job_name = state_data.get('schedule_name')
-    chat_id = state_data.get('chat_id')
-    source_config_name = state_data.get('schedule_source_config_name')
-    tt_config_name = state_data.get('schedule_tt_config_name')
-    action = state_data.get('schedule_action')
-    trigger_type = state_data.get('schedule_trigger_type')
-    trigger_args = state_data.get('schedule_trigger_args') # Распарсенные аргументы (словарь)
-
-    # Валидация: убедимся, что все необходимые данные собраны
-    # trigger_args может быть пустым словарем для некоторых триггеров, поэтому проверяем не None
-    if not all([job_name, chat_id, source_config_name, tt_config_name, action, trigger_type, trigger_args is not None]):
-        error_msg = "Ошибка: Недостаточно данных для создания задания. Пожалуйста, начните заново."
-        print(f"Неполные данные в состоянии для создания задания: {state_data}", file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Недостаточно данных.")
-        return
-
-    # Генерируем уникальный ID задания для APScheduler и базы данных
-    job_id = str(uuid.uuid4())
-
-    # Создаем объект триггера APScheduler из собранных данных
-    trigger = None
-    try:
-        if trigger_type == 'interval':
-             # Создаем IntervalTrigger из словаря аргументов
-             trigger = IntervalTrigger(**trigger_args)
-        elif trigger_type == 'cron':
-             # Аргументы для CronTrigger будут строкой (cron expression)
-             cron_expression = trigger_args.get('cron_expression') # Предполагаем такой ключ
-             if not cron_expression: raise ValueError("Cron expression is missing.")
-             trigger = CronTrigger.from_crontab(cron_expression) # Или CronTrigger(**args)
-        elif trigger_type == 'date':
-             # Аргументы для DateTrigger будут дата и время (например, строка в ISO формате)
-             run_date_str = trigger_args.get('run_date') # Предполагаем такой ключ
-             if not run_date_str: raise ValueError("Run date is missing.")
-             run_date = datetime.fromisoformat(run_date_str) # Парсим строку даты
-             trigger = DateTrigger(run_date=run_date)
-
-        if trigger is None:
-             # Если тип триггера неизвестен или логика создания отсутствует
-             raise ValueError(f"Неподдерживаемый или неполностью реализованный тип триггера: {trigger_type}")
-
-    except Exception as e:
-        # Обработка ошибок при создании объекта триггера (например, неверные аргументы)
-        error_msg = f"Ошибка при создании расписания для задания '{job_name}': {e}. Задание не создано."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка создания триггера.")
-        return
-
-
-    # Сохраняем запланированное задание в базу данных
-    # Аргументы триггера сохраняем как JSON строку
-    trigger_args_json_str = json.dumps(trigger_args)
-    db_success = await sqlite_db.add_scheduled_job(
-        job_id=job_id, # Уникальный ID задания
-        name=job_name, # Имя задания
-        chat_id=chat_id, # ID чата пользователя
-        source_config_name=source_config_name, # Имя конфига источника
-        tt_config_name=tt_config_name, # Имя конфига TT
-        action=action, # Действие
-        trigger_type=trigger_type, # Тип триггера
-        trigger_args_json=trigger_args_json_str # Аргументы триггера как JSON строка
-    )
-
-    # Проверяем успешность сохранения в БД
-    if not db_success:
-        error_msg = f"Ошибка при сохранении задания '{job_name}' в базу данных. Возможно, имя задания уже занято (хотя мы проверяли ранее)."
-        print(error_msg, file=sys.stderr)
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear()
-        await callback.answer("Ошибка сохранения в БД.")
-        return
-
-    # Добавляем запланированное задание в экземпляр планировщика APScheduler
-    try:
-        scheduler.add_job(
-            scheduled_task_executor, # Функция, которую вызовет планировщик при срабатывании триггера
-            trigger=trigger, # Созданный объект триггера
-            id=job_id, # Используем тот же уникальный ID задания, что и в БД
-            name=job_name, # Имя задания
-            kwargs={ # Аргументы, которые будут переданы в scheduled_task_executor при вызове
-                'bot': callback.bot, # Передаем экземпляр бота из callback_data!
-                'chat_id': chat_id,
-                'source_config_name': source_config_name,
-                'tt_config_name': tt_config_name,
-                'action': action,
-                'job_name': job_name # Передаем имя задания для удобства в scheduled_task_executor
-            },
-            # replace_existing=False по умолчанию, что подходит для добавления нового уникального задания
-        )
-        logging.info(f"Запланированное задание '{job_name}' (ID: {job_id}) успешно добавлено в планировщик.")
-
-        # Отправляем пользователю сообщение об успешном создании задания
-        await callback.message.edit_text(
-            f"✅ Запланированное задание '{job_name}' успешно создано и добавлено в расписание!",
-            reply_markup=manage_schedules_menu_keyboard() # Возвращаемся в меню управления расписанием
-        )
-        # Очищаем FSM состояние после успешного создания задания
-        await state.clear()
-        await callback.answer("Задание успешно создано.")
-
-    except Exception as e:
-        # Обработка ошибок, если не удалось добавить задание в планировщик (например, проблема с хранилищем или триггером)
-        print(f"Ошибка при добавлении задания '{job_name}' в планировщик: {e}", file=sys.stderr)
-        # Если не удалось добавить в планировщик, нужно попытаться удалить запись из БД,
-        # чтобы не было "фантомных" заданий, которые есть в БД, но не в расписании.
-        db_delete_success = await sqlite_db.delete_scheduled_job(job_id)
-        if db_delete_success:
-            print(f"Задание '{job_name}' (ID: {job_id}) удалено из БД после ошибки добавления в планировщик.", file=sys.stderr)
-            error_msg = f"Ошибка при добавлении задания '{job_name}' в расписание: {e}. Оно было удалено из базы данных для избежания расхождений."
-        else:
-             error_msg = f"Ошибка при добавлении задания '{job_name}' в расписание: {e}. Также произошла ошибка при попытке удалить запись из базы данных. Возможны расхождения."
-             print(f"Критическая ошибка: Ошибка удаления задания '{job_name}' (ID: {job_id}) из БД после ошибки добавления в планировщик.", file=sys.stderr)
-
-        # Отправляем сообщение об ошибке пользователю
-        await callback.message.edit_text(error_msg, reply_markup=manage_schedules_menu_keyboard())
-        await state.clear() # Очищаем FSM состояние
-        await callback.answer("Произошла ошибка при добавлении в расписание.")
-
-
-# --- Функции выполнения запланированных задач (продолжение, без изменений) ---
-# async def scheduled_task_executor(bot: Bot, chat_id: int, ...): ...
-# async def run_rust_task_for_scheduled_job(...): ...

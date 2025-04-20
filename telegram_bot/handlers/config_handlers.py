@@ -84,11 +84,12 @@ async def process_source_param(message: Message, state: FSMContext):
                     validation_error = f"Неверная схема URL для Elasticsearch. Ожидается 'http://' или 'https://'."
 
             # Валидация пути к файлу для файловых источников (остается без изменений)
-            elif source_type in ['sqlite', 'csv', 'excel']: # Удалены: sqlite_query не является путем к файлу source_url
+            elif source_type in ['sqlite', 'csv']: # Removed excel
                  if not Path(user_input).is_file():
                       validation_error = f"Файл по пути '{user_input}' не найден или это не файл."
-                 elif source_type == 'excel' and not (user_input.lower().endswith('.xlsx') or user_input.lower().endswith('.xls')):
-                      validation_error = f"Файл должен быть в формате .xlsx или .xls."
+            # Removed excel specific validation
+            # elif source_type == 'excel' and not (user_input.lower().endswith('.xlsx') or user_input.lower().endswith('.xls')):
+            #      validation_error = f"Файл должен быть в формате .xlsx или .xls."
                  elif source_type == 'csv' and not user_input.lower().endswith('.csv'):
                       validation_error = f"Файл должен быть в формате .csv."
 

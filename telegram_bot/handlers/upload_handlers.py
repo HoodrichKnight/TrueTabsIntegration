@@ -424,7 +424,6 @@ SOURCE_PARAMS_ORDER: Dict[str, List[str]] = {
     "elasticsearch": ["source_url", "es_index", "es_query"], # source_url здесь - URL
     "csv": ["source_url"], # source_url здесь - путь к файлу .csv
     "excel": ["source_url"], # source_url здесь - путь к файлу .xlsx/.xls
-    # Удалены неподдерживаемые источники (cassandra, neo4j, couchbase)
 }
 
 # Список источников, которые временно отключены или в разработке
@@ -840,10 +839,10 @@ async def process_source_param_manual(message: Message, state: FSMContext):
             parse_mode='HTML'
         )
 
-# Обработчик загрузки файла для файловых источников (csv, excel)
+# Обработчик загрузки файла для файловых источников (csv)
 @router.message(F.document, UploadProcess.waiting_file_upload)
 async def process_uploaded_file(message: Message, state: FSMContext, bot: Bot):
-    """Обрабатывает загрузку файла для источников типа CSV или Excel."""
+    """Обрабатывает загрузку файла для источников типа CSV."""
     await message.answer("Получен файл, обрабатываю...")
 
     state_data = await state.get_data()
@@ -853,7 +852,7 @@ async def process_uploaded_file(message: Message, state: FSMContext, bot: Bot):
     # Проверка расширения файла
     allowed_extensions = {
         'csv': ['.csv'],
-        'excel': ['.xlsx', '.xls'],
+        # Removed excel extensions
     }
     expected_extensions = allowed_extensions.get(source_type, [])
     file_extension = Path(original_file_name).suffix.lower()
@@ -1222,11 +1221,11 @@ def build_confirmation_message(source_type: str, source_params: Dict[str, Any], 
               # Скрываем чувствительные данные (пароли, токены)
               if key in ['source_pass', 'upload_api_token']:
                   confirm_text += f"  {friendly_key.capitalize()}: <code>***</code>\n"
-              # Специальная обработка для пути к файлу (CSV/Excel)
-              elif key == 'source_url' and source_type in ['csv', 'excel']:
-                   # Получаем имя файла из пути для более короткого отображения
-                   file_name = Path(value).name if isinstance(value, str) else value
-                   confirm_text += f"  {get_friendly_param_name('source_url_file').capitalize()}: <code>{file_name}</code>\n"
+          # Специальная обработка для пути к файлу (CSV)
+          elif key == 'source_url' and source_type == 'csv':
+               # Получаем имя файла из пути для более короткого отображения
+               file_name = Path(value).name if isinstance(value, str) else value
+               confirm_text += f"  {get_friendly_param_name('source_url_file').capitalize()}: <code>{file_name}</code>\n"
               # Специальная обработка для JSON (запросов, сопоставления полей)
               elif key in ['es_query', 'upload_field_map_json'] and isinstance(value, (str, dict)):
                   try:

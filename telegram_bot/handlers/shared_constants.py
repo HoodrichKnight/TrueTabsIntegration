@@ -4,12 +4,12 @@ from typing import Dict, List
 SOURCE_PARAMS_ORDER: Dict[str, List[str]] = {
     "postgres": ["source_url", "source_user", "source_pass", "source_query"],
     "mysql": ["source_url", "source_user", "source_pass", "source_query"],
-    "sqlite": ["source_url", "source_query"],  # source_url здесь - путь к файлу .db
-    "mongodb": ["source_url", "mongo_db", "mongo_collection"],  # source_url здесь - URI
-    "redis": ["source_url", "redis_pattern"],  # source_url здесь - URL
-    "elasticsearch": ["source_url", "es_index", "es_query"],  # source_url здесь - URL
-    "csv": ["source_url"],  # source_url здесь - путь к файлу .csv
-    "excel": ["source_url"],  # source_url здесь - путь к файлу .xlsx/.xls
+    "sqlite": ["source_url", "source_query"], # source_url здесь - путь к файлу .db
+    "mongodb": ["source_url", "mongo_db", "mongo_collection"], # source_url здесь - URI
+    "redis": ["source_url", "redis_pattern"], # source_url здесь - URL
+    "elasticsearch": ["source_url", "es_index", "es_query"], # source_url здесь - URL
+    "csv": ["source_url"], # source_url здесь - путь к файлу .csv
+    # Removed excel as per user request
 }
 
 # Более дружественные названия параметров для отображения пользователю

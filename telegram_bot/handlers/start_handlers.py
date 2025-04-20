@@ -38,21 +38,7 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 # Он должен быть определен на уровне диспетчера или в роутере, который включен в диспетчер
 # и срабатывает для всех состояний или без состояний, кроме специфических.
 # В данном случае, добавим его в start_handlers, т.к. он связан с начальным меню и отменой.
-@router.callback_query(F.data == "main_menu")
-async def back_to_main_menu_handler(callback: CallbackQuery, state: FSMContext):
-     """
-     Обрабатывает callback "main_menu". Возвращает пользователя в главное меню и очищает состояние.
-     """
-     await state.clear() # Очищаем любое текущее состояние при возврате в главное меню
-     await callback.message.edit_text("Выберите действие:", reply_markup=main_menu_keyboard())
-     await callback.answer() # Отвечаем на callback, чтобы убрать "часики"
-
-
-# Общий хэндлер для callback "cancel" во время любого FSM процесса
-# Этот хэндлер должен иметь низкий приоритет или быть зарегистрирован так, чтобы не перекрывать
-# специфические хэндлеры в FSM состояниях, если "cancel" используется в них для других целей.
-# Однако, если "cancel" всегда означает отмену текущего FSM, этот подход работает.
-@router.callback_query(F.data == "cancel") # Сработает на callback_data == "cancel"
+# Removed the handler for callback "main_menu" to delete the menu as requested
 @router.message(F.text.lower() == "отмена", StateFilter("*")) # Сработает на текст "отмена" в любом состоянии
 async def cancel_fsm_process(callback_or_message: Union[Message, CallbackQuery], state: FSMContext):
     """
