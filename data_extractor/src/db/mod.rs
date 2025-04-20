@@ -1,7 +1,6 @@
 pub mod sql;
 pub mod nosql;
-
-use anyhow::Result;
+pub mod truetabs;
 
 #[derive(Debug)]
 pub struct ExtractedData {
