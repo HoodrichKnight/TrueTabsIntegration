@@ -2,7 +2,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Dict, Any, Optional
 
-# --- Существующие клавиатуры (без изменений) ---
+# Copy of inline.py with added Export and Update buttons in main menu
+
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -18,9 +19,17 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📅 Запланированные задания", callback_data="manage_schedules")
     )
     builder.row(
+        InlineKeyboardButton(text="📤 Выгрузить данные", callback_data="export_data")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔄 Обновить данные", callback_data="update_data")
+    )
+    builder.row(
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
     )
     return builder.as_markup()
+
+# The rest of the keyboards are copied as is from inline.py
 
 def manage_schedules_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -187,7 +196,6 @@ def select_schedule_action_keyboard() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
-# --- НОВАЯ КЛАВИАТУРА для выбора типа триггера ---
 def select_schedule_trigger_type_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="По интервалу (Interval)", callback_data="select_trigger_type:interval"))
@@ -197,7 +205,6 @@ def select_schedule_trigger_type_keyboard() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
-# --- НОВАЯ КЛАВИАТУРА для подтверждения создания задания ---
 def confirm_schedule_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -219,7 +226,6 @@ def weather_menu_keyboard() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-# --- NEW Keyboard for selecting forecast period ---
 def select_forecast_period_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     # Periods supported by OpenWeatherMap Free API (3-hour intervals, up to 5 days)
@@ -246,24 +252,4 @@ def select_forecast_period_keyboard() -> InlineKeyboardMarkup:
 
     # Note: Week and Month forecast require paid API or external logic to summarize data
 
-    return builder.as_markup()
-
-def schedule_details_actions_keyboard(job_id: str, is_paused: bool = False) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    if is_paused:
-        builder.row(
-            InlineKeyboardButton(text="▶️ Возобновить", callback_data=f"resume_schedule:{job_id}"),
-            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_schedule:{job_id}"),
-        )
-    else:
-        builder.row(
-            InlineKeyboardButton(text="⏸️ Пауза", callback_data=f"pause_schedule:{job_id}"),
-            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_schedule:{job_id}"),
-        )
-    builder.row(
-        InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_schedule_confirm:{job_id}")
-    )
-    builder.row(
-        InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="list_schedules")
-    )
     return builder.as_markup()

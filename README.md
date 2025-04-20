@@ -25,6 +25,7 @@ The TrueTabs Integration Bot is a Telegram bot that allows users to manage data 
 - Schedule automated extraction or update jobs with flexible triggers (interval, cron, date)
 - View upload history and status
 - Configure True Tabs settings
+- Get data from True Tabs
 - Interactive Telegram UI with inline keyboards
 - Weather information integration
 
@@ -165,6 +166,7 @@ TrueTabs Integration Bot — это Telegram-бот, который позвол
 - Планирование автоматических заданий извлечения или обновления с гибкими триггерами (интервал, cron, дата)
 - Просмотр истории загрузок и статусов
 - Настройка параметров True Tabs
+- Получение данных из True Tabs
 - Интерактивный Telegram UI с inline-клавиатурами
 - Интеграция информации о погоде
 
