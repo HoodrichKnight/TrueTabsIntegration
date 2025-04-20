@@ -2,7 +2,7 @@
 from cryptography.fernet import Fernet
 import base64
 import logging
-from config import ENCRYPTION_KEY
+from ..config import ENCRYPTION_KEY
 
 try:
     fernet = Fernet(ENCRYPTION_KEY) if ENCRYPTION_KEY else None

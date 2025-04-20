@@ -1,10 +1,9 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from keyboards.inline import history_pagination_keyboard
-from database.sqlite_db import get_upload_history, count_upload_history
+from ..keyboards import history_pagination_keyboard, main_menu_keyboard
+from ..database.sqlite_db import get_upload_history, count_upload_history
 import os
 from datetime import datetime
-from keyboards.inline import main_menu_keyboard
 
 router = Router()
 

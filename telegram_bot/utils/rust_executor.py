@@ -4,7 +4,7 @@ import asyncio
 import time
 import os
 import json
-from config import RUST_EXECUTABLE_PATH
+from ..config import RUST_EXECUTABLE_PATH
 from typing import Dict, Any, Optional
 import sys
 
