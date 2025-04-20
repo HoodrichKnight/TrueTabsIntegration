@@ -1,0 +1,26 @@
+[package]
+name = "data_extractor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+bigdecimal = "0.4"
+bson = "2.0"
+clap = { version = "4.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+csv = "1.1" # Для CSV файлов
+dotenv = "0.15"
+elasticsearch = { version = "8.17.0-alpha.1" }
+futures = "0.3"
+influxdb-client = "0.1.4"
+mongodb = "2.6"
+redis = { version = "0.24", features = ["tokio-comp"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
+rust_xlsxwriter = "0.60"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "macros", "postgres", "mysql", "sqlite", "uuid", "json", "chrono", "bigdecimal"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+uuid = { version = "1.4", features = ["serde", "v4"] }
