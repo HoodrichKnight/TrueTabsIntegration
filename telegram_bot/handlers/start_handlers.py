@@ -4,6 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from ..keyboards.inline import main_menu_keyboard
 from .config_handlers import manage_configs_menu
+from aiogram.filters.state import StateFilter
+
+
 
 router = Router()
 
@@ -14,7 +17,7 @@ async def handle_start(message: Message):
         reply_markup=main_menu_keyboard()
     )
 
-@router.callback_query(F.data == "main_menu")
+@router.callback_query(F.data == "main_menu", StateFilter(None))
 async def handle_main_menu_callback(callback: CallbackQuery):
     await callback.message.edit_text(
          "Выберите действие:",
@@ -22,7 +25,7 @@ async def handle_main_menu_callback(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(F.data == "main_menu")
+@router.callback_query(F.data == "main_menu", ~StateFilter(None))
 async def handle_back_to_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.delete()

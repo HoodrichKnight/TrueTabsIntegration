@@ -11,7 +11,6 @@ RECORDS_PER_PAGE = 5
 
 @router.callback_query(F.data.startswith("view_history:"))
 async def handle_view_history(callback: CallbackQuery):
-    """Обработчик колбэка кнопки 'История загрузок' и пагинации."""
     try:
         offset = int(callback.data.split(":")[1])
     except (IndexError, ValueError):

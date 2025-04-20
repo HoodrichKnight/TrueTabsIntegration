@@ -21,11 +21,9 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 def source_selection_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     sources = [
-        ("PostgreSQL", "postgres"), ("MySQL", "mysql"), ("SQLite", "sqlite"), ("MSSQL", "mssql"),
-        ("MongoDB", "mongodb"), ("Redis", "redis"), ("Cassandra/ScyllaDB", "cassandra"),
-        ("ClickHouse", "clickhouse"), ("InfluxDB", "influxdb"), ("Elasticsearch", "elasticsearch"),
-        ("Excel файл", "excel"), ("CSV файл", "csv"),
-        ("Neo4j", "neo4j"), ("Couchbase", "couchbase"),
+        ("PostgreSQL", "postgres"), ("MySQL", "mysql"), ("SQLite", "sqlite"),
+        ("MongoDB", "mongodb"), ("Redis", "redis"), ("Elasticsearch", "elasticsearch"),
+        ("CSV файл", "csv"),
     ]
     for text, source_type in sources:
         builder.button(text=text, callback_data=f"start_upload_process:{source_type}")

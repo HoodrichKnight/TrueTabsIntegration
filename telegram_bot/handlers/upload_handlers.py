@@ -23,6 +23,29 @@ from ..utils.rust_executor import execute_rust_command
 from ..database import sqlite_db
 from .. import config
 
+PARAM_NAMES_FRIENDLY = {
+    'source_url': "адрес базы данных (URL) или путь к файлу",
+    'source_user': "имя пользователя",
+    'source_pass': "пароль",
+    'source_query': "текст SQL запроса",
+    'db_name': "имя базы данных",
+    'collection_name': "имя коллекции",
+    'key_pattern': "паттерн ключей Redis",
+    'es_index': "имя индекса Elasticsearch",
+    'es_query': "текст JSON запроса Elasticsearch",
+    'redis_pattern': "паттерн ключей Redis",
+    'mongo_db': "имя базы данных MongoDB",
+    'mongo_collection': "имя коллекции MongoDB",
+    'csv': "CSV файл",
+    'upload_api_token': "токен API True Tabs",
+    'upload_datasheet_id': "ID таблицы True Tabs (начинается на 'dst')",
+    'upload_field_map_json': "сопоставление заголовков и Field ID в формате JSON (опционально, оставьте пустым для пропуска)",
+}
+
+
+def get_friendly_param_name(param_key: str) -> str:
+    return PARAM_NAMES_FRIENDLY.get(param_key, param_key.replace('_', ' ').capitalize())
+
 router = Router()
 
 class UploadProcess(StatesGroup):
@@ -38,9 +61,6 @@ class UploadProcess(StatesGroup):
     waiting_sqlite_url = State()
     waiting_sqlite_query = State()
 
-    waiting_mssql_url = State()
-    waiting_mssql_query = State()
-
     waiting_redis_url = State()
     waiting_redis_pattern = State()
 
@@ -48,36 +68,10 @@ class UploadProcess(StatesGroup):
     waiting_mongo_db = State()
     waiting_mongo_collection = State()
 
-    waiting_cassandra_addresses = State()
-    waiting_cassandra_keyspace = State()
-    waiting_cassandra_query = State()
-
-    waiting_clickhouse_url = State()
-    waiting_clickhouse_query = State()
-
-    waiting_influxdb_url = State()
-    waiting_influxdb_token = State()
-    waiting_influxdb_org = State()
-    waiting_influxdb_bucket = State()
-    waiting_influxdb_query = State()
-
     waiting_elasticsearch_url = State()
     waiting_elasticsearch_index = State()
     waiting_elasticsearch_query = State()
 
-    waiting_neo4j_uri = State()
-    waiting_neo4j_user = State()
-    waiting_neo4j_pass = State()
-    waiting_neo4j_query = State()
-
-    waiting_couchbase_cluster_url = State()
-    waiting_couchbase_user = State()
-    waiting_couchbase_pass = State()
-    waiting_couchbase_bucket = State()
-    waiting_couchbase_query = State()
-
-
-    waiting_excel_filepath = State()
     waiting_csv_filepath = State()
 
     # TODO: Добавить состояния для Labguru
@@ -95,19 +89,14 @@ SOURCE_PARAMS_ORDER = {
     "postgres": ["source_url", "source_query"],
     "mysql": ["source_url", "source_query"],
     "sqlite": ["source_url", "source_query"],
-    "mssql": ["source_url", "source_query"],
     "redis": ["source_url", "redis_pattern"],
     "mongodb": ["source_url", "mongo_db", "mongo_collection"],
-    "cassandra": ["source_url", "cassandra_keyspace", "cassandra_query"],
-    "clickhouse": ["source_url", "source_query"],
-    "influxdb": ["source_url", "influx_token", "influx_org", "influx_bucket", "influx_query"],
     "elasticsearch": ["source_url", "es_index", "es_query"],
-    "neo4j": ["source_url", "neo4j_user", "neo4j_pass", "source_query"],
-    "couchbase": ["source_url", "source_user", "source_pass", "couchbase_bucket", "couchbase_query"],
-    "excel": ["source_url"],
     "csv": ["source_url"],
     # TODO: Добавить сюда порядок параметров для Labguru
 }
+
+DISABLED_SOURCES = ['mssql', 'cassandra', 'couchbase', 'clickhouse', 'influxdb', 'neo4j', 'excel']
 
 def is_valid_url(url_string: str) -> bool:
     """Checks if a string is a valid URL."""
@@ -151,6 +140,7 @@ async def start_upload_process_fsm(callback: CallbackQuery, state: FSMContext):
      await state.update_data(selected_source_type=source_type, source_params={})
      await state.set_state(UploadProcess.select_source_input_method)
 
+     # ... остальная логика хендлера start_upload_process_fsm ...
      if source_type in SOURCE_PARAMS_ORDER:
           await callback.message.edit_text(
              f"Выбран источник: <b>{source_type}</b>.\nВыберите способ ввода параметров для источника:",
@@ -158,8 +148,10 @@ async def start_upload_process_fsm(callback: CallbackQuery, state: FSMContext):
              parse_mode='HTML'
           )
      else:
+          # Это обрабатывает источники, которых нет в SOURCE_PARAMS_ORDER
+          # и, возможно, отключенные источники, если они не были пойманы выше
           await callback.message.edit_text(
-              f"Выбран источник: <b>{source_type}</b>.\nПошаговый ввод параметров для этого источника пока не реализован.\n"
+              f"Выбран источник: <b>{source_type}</b>.\nПошаговый ввод параметров для этого источника пока не реализован или он отключен.\n"
               f"Пожалуйста, выберите другой источник или вернитесь в главное меню.",
               reply_markup=main_menu_keyboard(),
               parse_mode='HTML'
@@ -168,6 +160,7 @@ async def start_upload_process_fsm(callback: CallbackQuery, state: FSMContext):
 
      await callback.answer()
 
+
 @router.callback_query(F.data.startswith("select_input_method:"), UploadProcess.select_source_input_method)
 async def process_source_input_method(callback: CallbackQuery, state: FSMContext):
     method = callback.data.split(":")[1]
@@ -175,53 +168,62 @@ async def process_source_input_method(callback: CallbackQuery, state: FSMContext
     source_type = state_data['selected_source_type']
     cancel_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]])
 
+    # TODO: Добавьте здесь проверку на отключенные источники и Алерт!
 
+    # --- Логика для файловых источников ---
+    if source_type in ['csv', 'excel']: # Проверяем, является ли источник файлом
+         await state.set_state(UploadProcess.waiting_file_upload) # Переходим в состояние ожидания файла
+         friendly_name = get_friendly_param_name(source_type) # Получаем "CSV файл" или "Excel файл"
+         await callback.message.edit_text(f"Пожалуйста, отправьте мне файл {friendly_name.upper()}.") # <-- Изменено
+         await callback.answer()
+         return # Важно: выходим из хендлера
+
+    # --- Логика для ручного ввода параметров (если не файловый источник) ---
     if method == 'manual':
         initial_param_state = None
+        param_keys_order = SOURCE_PARAMS_ORDER.get(source_type, [])
 
+        if not param_keys_order:
+            # TODO: Обработка источников без параметров
+            await callback.message.edit_text(f"Для источника '{source_type}' параметры не требуются или собираются другим способом.", reply_markup=main_menu_keyboard())
+            await state.clear()
+            await callback.answer()
+            return
+
+        first_param_key = param_keys_order[0]
+
+        # Определение начального состояния для первого параметра
+        # Это можно упростить, если структура SOURCE_PARAMS_ORDER и StatesGroup жестко связаны
         if source_type == "postgres":
             initial_param_state = UploadProcess.waiting_pg_url
         elif source_type == "mysql":
             initial_param_state = UploadProcess.waiting_mysql_url
         elif source_type == "sqlite":
             initial_param_state = UploadProcess.waiting_sqlite_url
-        elif source_type == "mssql":
-            initial_param_state = UploadProcess.waiting_mssql_url
         elif source_type == "redis":
              initial_param_state = UploadProcess.waiting_redis_url
         elif source_type == "mongodb":
             initial_param_state = UploadProcess.waiting_mongodb_uri
-        elif source_type == "cassandra":
-             initial_param_state = UploadProcess.waiting_cassandra_addresses
-        elif source_type == "clickhouse":
-             initial_param_state = UploadProcess.waiting_clickhouse_url
-        elif source_type == "influxdb":
-             initial_param_state = UploadProcess.waiting_influxdb_url
         elif source_type == "elasticsearch":
              initial_param_state = UploadProcess.waiting_elasticsearch_url
-        elif source_type == "neo4j":
-             initial_param_state = UploadProcess.waiting_neo4j_uri
-        elif source_type == "couchbase":
-             initial_param_state = UploadProcess.waiting_couchbase_cluster_url
-        elif source_type == "excel":
-            initial_param_state = UploadProcess.waiting_excel_filepath
         elif source_type == "csv":
             initial_param_state = UploadProcess.waiting_csv_filepath
-
-        # TODO: Добавить сюда условия для Labguru
+        # TODO: Добавить сюда условия для Labguru и других
 
         if initial_param_state:
-             param_keys_order = SOURCE_PARAMS_ORDER.get(source_type, [])
-             first_param_key = param_keys_order[0] if param_keys_order else "параметр"
-
              await state.set_state(initial_param_state)
              await state.update_data(
                   param_keys_order=param_keys_order,
-                  current_param_index=0,
+                  current_param_index=0, # Индекс для текущего (уже введенного) параметра, а не для следующего!
+                                         # Возможно, стоит пересмотреть логику индексации.
+                                         # Или удалять ключи из param_keys_order по мере ввода.
              )
-             await callback.message.edit_text(f"Введите параметр '{first_param_key}':", reply_markup=cancel_kb)
+             # Используем функцию get_friendly_param_name для запроса ПЕРВОГО параметра
+             friendly_name = get_friendly_param_name(first_param_key)
+             await callback.message.edit_text(f"Введите {friendly_name}:", reply_markup=cancel_kb) # <--- Изменено здесь
              await callback.answer()
         else:
+            # ... (обработка нереализованных источников) ...
             await callback.message.edit_text(f"Ошибка: Ручной ввод параметров для источника '{source_type}' не реализован.", reply_markup=main_menu_keyboard())
             await state.clear()
             await callback.answer()
@@ -266,21 +268,28 @@ async def process_saved_source_config_selection(callback: CallbackQuery, state: 
 @router.message(UploadProcess.waiting_pg_url)
 async def process_pg_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
+    # TODO: Возможно, стоит добавить более строгую проверку URL для Postgres
     if not validators.url(url):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к PostgreSQL:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"Неверный формат URL. Пожалуйста, введите валидный {friendly_name} для PostgreSQL:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_pg_query)
-    await message.answer("Введите SQL запрос:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('source_query')
+    await message.answer(f"Введите {friendly_name}:")
 
 @router.message(UploadProcess.waiting_pg_query)
 async def process_pg_query_manual(message: Message, state: FSMContext):
     query = message.text.strip()
     if not query:
-        await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_query')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
@@ -293,20 +302,26 @@ async def process_pg_query_manual(message: Message, state: FSMContext):
 async def process_mysql_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
     if not validators.url(url):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к MySQL:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"Неверный формат URL. Пожалуйста, введите валидный {friendly_name} для MySQL:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_mysql_query)
-    await message.answer("Введите SQL запрос:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('source_query')
+    await message.answer(f"Введите {friendly_name}:")
 
 @router.message(UploadProcess.waiting_mysql_query)
 async def process_mysql_query_manual(message: Message, state: FSMContext):
     query = message.text.strip()
     if not query:
-        await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_query')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
@@ -317,48 +332,30 @@ async def process_mysql_query_manual(message: Message, state: FSMContext):
 
 @router.message(UploadProcess.waiting_sqlite_url)
 async def process_sqlite_url_manual(message: Message, state: FSMContext):
-    url = message.text.strip()
-    if not url:
-        await message.answer("URL (путь к файлу БД) не может быть пустым. Введите путь к файлу SQLite БД:")
+    url = message.text.strip() # Здесь url - это путь к файлу БД
+    if not url: # Проверяем на пустоту
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name} для SQLite:") # <-- Изменено
         return
+    # TODO: Возможно, стоит добавить проверку существования файла здесь: if not Path(url).is_file(): ...
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_sqlite_query)
-    await message.answer("Введите SQL запрос:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('source_query')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
+
 
 @router.message(UploadProcess.waiting_sqlite_query)
 async def process_sqlite_query_manual(message: Message, state: FSMContext):
     query = message.text.strip()
     if not query:
-        await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
-        return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_mssql_url)
-async def process_mssql_url_manual(message: Message, state: FSMContext):
-    url = message.text.strip()
-    if not validators.url(url):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к MSSQL:")
-        return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = url
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_mssql_query)
-    await message.answer("Введите SQL запрос:")
-
-@router.message(UploadProcess.waiting_mssql_query)
-async def process_mssql_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-        await message.answer("SQL запрос не может быть пустым. Введите SQL запрос:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_query')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
@@ -370,22 +367,27 @@ async def process_mssql_query_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_redis_url)
 async def process_redis_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not validators.url(url, require_tld=False):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к Redis:")
+    if not validators.url(url, require_tld=False): # TODO: Проверьте валидацию URL для Redis
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"Неверный формат URL. Пожалуйста, введите валидный {friendly_name} для Redis:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['source_url'] = url
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_redis_pattern)
-    await message.answer("Введите паттерн ключей Redis (например, *, user:*, опционально):")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('redis_pattern')
+    await message.answer(f"Введите {friendly_name} (например, *, user:*, опционально):") # <-- Изменено
 
 @router.message(UploadProcess.waiting_redis_pattern)
 async def process_redis_pattern_manual(message: Message, state: FSMContext):
     pattern = message.text.strip()
+    # У вас нет явной валидации на формат паттерна, только проверка на пустоту в параметрах Rust
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['redis_pattern'] = pattern if pattern else "*"
+    current_params['redis_pattern'] = pattern if pattern else "*" # Если пусто, используем "*" по умолчанию
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.select_tt_input_method)
     await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
@@ -393,34 +395,45 @@ async def process_redis_pattern_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_mongodb_uri)
 async def process_mongo_uri_manual(message: Message, state: FSMContext):
     uri = message.text.strip()
-    if not uri:
-        await message.answer("URI подключения не может быть пустым. Введите URI подключения к MongoDB:")
+    if not uri: # TODO: Возможно, стоит добавить валидацию URI для MongoDB
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name} для MongoDB:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['source_url'] = uri
+    current_params['source_url'] = uri # TODO: Ключ параметра в Rust - source_url, убедитесь, что он совпадает
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_mongo_db)
-    await message.answer("Введите имя базы данных MongoDB:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('mongo_db')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
+
 
 @router.message(UploadProcess.waiting_mongo_db)
 async def process_mongo_db_manual(message: Message, state: FSMContext):
     db_name = message.text.strip()
     if not db_name:
-         await message.answer("Имя базы данных не может быть пустым. Введите имя базы данных:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('mongo_db')
+         await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
          return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
     current_params['mongo_db'] = db_name
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_mongo_collection)
-    await message.answer("Введите имя коллекции MongoDB:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕЙ коллекции
+    friendly_name = get_friendly_param_name('mongo_collection')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
 
 @router.message(UploadProcess.waiting_mongo_collection)
 async def process_mongo_collection_manual(message: Message, state: FSMContext):
     collection_name = message.text.strip()
     if not collection_name:
-         await message.answer("Имя коллекции не может быть пустым. Введите имя коллекции:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('mongo_collection')
+         await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
          return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
@@ -429,161 +442,39 @@ async def process_mongo_collection_manual(message: Message, state: FSMContext):
     await state.set_state(UploadProcess.select_tt_input_method)
     await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
 
-@router.message(UploadProcess.waiting_cassandra_addresses)
-async def process_cassandra_addresses_manual(message: Message, state: FSMContext):
-    addresses = message.text.strip()
-    if not addresses or not any(addr.strip() for addr in addresses.split(',')):
-         await message.answer("Адреса узлов не могут быть пустыми. Введите адреса Cassandra/ScyllaDB через запятую:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = addresses
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_cassandra_keyspace)
-    await message.answer("Введите keyspace Cassandra/ScyllaDB:")
-
-@router.message(UploadProcess.waiting_cassandra_keyspace)
-async def process_cassandra_keyspace_manual(message: Message, state: FSMContext):
-    keyspace = message.text.strip()
-    if not keyspace:
-         await message.answer("Keyspace не может быть пустым. Введите keyspace Cassandra/ScyllaDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['cassandra_keyspace'] = keyspace
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_cassandra_query)
-    await message.answer("Введите CQL запрос:")
-
-@router.message(UploadProcess.waiting_cassandra_query)
-async def process_cassandra_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-         await message.answer("CQL запрос не может быть пустым. Введите CQL запрос:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['cassandra_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_clickhouse_url)
-async def process_clickhouse_url_manual(message: Message, state: FSMContext):
-    url = message.text.strip()
-    if not validators.url(url, require_tld=False):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к ClickHouse:")
-        return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = url
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_clickhouse_query)
-    await message.answer("Введите запрос ClickHouse:")
-
-@router.message(UploadProcess.waiting_clickhouse_query)
-async def process_clickhouse_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-        await message.answer("Запрос ClickHouse не может быть пустым. Введите запрос ClickHouse:")
-        return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_influxdb_url)
-async def process_influxdb_url_manual(message: Message, state: FSMContext):
-    url = message.text.strip()
-    if not url:
-         await message.answer("URL не может быть пустым. Введите URL InfluxDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = url
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_influxdb_token)
-    await message.answer("Введите токен InfluxDB:")
-
-@router.message(UploadProcess.waiting_influxdb_token)
-async def process_influxdb_token_manual(message: Message, state: FSMContext):
-    token = message.text.strip()
-    if not token:
-         await message.answer("Токен не может быть пустым. Введите токен InfluxDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['influx_token'] = token
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_influxdb_org)
-    await message.answer("Введите организацию (org) InfluxDB:")
-
-@router.message(UploadProcess.waiting_influxdb_org)
-async def process_influxdb_org_manual(message: Message, state: FSMContext):
-    org = message.text.strip()
-    if not org:
-         await message.answer("Организация не может быть пустой. Введите организацию (org) InfluxDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['influx_org'] = org
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_influxdb_bucket)
-    await message.answer("Введите bucket InfluxDB:")
-
-@router.message(UploadProcess.waiting_influxdb_bucket)
-async def process_influxdb_bucket_manual(message: Message, state: FSMContext):
-    bucket = message.text.strip()
-    if not bucket:
-         await message.answer("Bucket не может быть пустым. Введите bucket InfluxDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['influx_bucket'] = bucket
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_influxdb_query)
-    await message.answer("Введите Flux запрос InfluxDB:")
-
-@router.message(UploadProcess.waiting_influxdb_query)
-async def process_influxdb_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-         await message.answer("Flux запрос не может быть пустым. Введите Flux запрос InfluxDB:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['influx_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
 @router.message(UploadProcess.waiting_elasticsearch_url)
 async def process_elasticsearch_url_manual(message: Message, state: FSMContext):
     url = message.text.strip()
-    if not validators.url(url, require_tld=False):
-        await message.answer("Неверный формат URL. Пожалуйста, введите валидный URL подключения к Elasticsearch:")
+    if not validators.url(url, require_tld=False): # TODO: Проверьте валидацию URL для Elasticsearch
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('source_url')
+        await message.answer(f"Неверный формат URL. Пожалуйста, введите валидный {friendly_name} для Elasticsearch:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['source_url'] = url
+    current_params['source_url'] = url # TODO: Ключ параметра в Rust - source_url, убедитесь, что он совпадает
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_elasticsearch_index)
-    await message.answer("Введите индекс Elasticsearch:")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('es_index')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
 
 @router.message(UploadProcess.waiting_elasticsearch_index)
 async def process_elasticsearch_index_manual(message: Message, state: FSMContext):
     index = message.text.strip()
     if not index:
-         await message.answer("Индекс не может быть пустым. Введите индекс Elasticsearch:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('es_index')
+         await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
          return
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['es_index'] = index
+    current_params['es_index'] = index # TODO: Ключ параметра в Rust - es_index, убедитесь, что он совпадает
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.waiting_elasticsearch_query)
-    await message.answer("Введите JSON запрос Elasticsearch (опционально, {} для всех):")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра
+    friendly_name = get_friendly_param_name('es_query')
+    await message.answer(f"Введите {friendly_name} (опционально, {{}} для всех):") # <-- Изменено
 
 @router.message(UploadProcess.waiting_elasticsearch_query)
 async def process_elasticsearch_query_manual(message: Message, state: FSMContext):
@@ -594,140 +485,14 @@ async def process_elasticsearch_query_manual(message: Message, state: FSMContext
     try:
         json.loads(query_str)
     except json.JSONDecodeError:
-        await message.answer("Неверный формат JSON запроса. Пожалуйста, введите валидный JSON или {} для всех записей:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('es_query')
+        await message.answer(f"Неверный формат JSON запроса ({friendly_name}). Пожалуйста, проверьте формат и попробуйте снова:") # <-- Изменено
         return
 
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['es_query'] = query_str
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_neo4j_uri)
-async def process_neo4j_uri_manual(message: Message, state: FSMContext):
-    uri = message.text.strip()
-    if not uri:
-         await message.answer("URI не может быть пустым. Введите URI Neo4j:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = uri
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_neo4j_user)
-    await message.answer("Введите пользователя Neo4j:")
-
-@router.message(UploadProcess.waiting_neo4j_user)
-async def process_neo4j_user_manual(message: Message, state: FSMContext):
-    user = message.text.strip()
-    if not user:
-         await message.answer("Пользователь не может быть пустым. Введите пользователя Neo4j:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['neo4j_user'] = user
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_neo4j_pass)
-    await message.answer("Введите пароль Neo4j:")
-
-@router.message(UploadProcess.waiting_neo4j_pass)
-async def process_neo4j_pass_manual(message: Message, state: FSMContext):
-    password = message.text.strip()
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['neo4j_pass'] = password
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_neo4j_query)
-    await message.answer("Введите Cypher запрос:")
-
-@router.message(UploadProcess.waiting_neo4j_query)
-async def process_neo4j_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-         await message.answer("Cypher запрос не может быть пустым. Введите Cypher запрос:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_couchbase_cluster_url)
-async def process_couchbase_cluster_url_manual(message: Message, state: FSMContext):
-    url = message.text.strip()
-    if not url:
-         await message.answer("URL кластера не может быть пустым. Введите URL кластера Couchbase:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = url
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_couchbase_user)
-    await message.answer("Введите пользователя Couchbase:")
-
-@router.message(UploadProcess.waiting_couchbase_user)
-async def process_couchbase_user_manual(message: Message, state: FSMContext):
-    user = message.text.strip()
-    if not user:
-         await message.answer("Пользователь не может быть пустым. Введите пользователя Couchbase:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_user'] = user
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_couchbase_pass)
-    await message.answer("Введите пароль Couchbase:")
-
-@router.message(UploadProcess.waiting_couchbase_pass)
-async def process_couchbase_pass_manual(message: Message, state: FSMContext):
-    password = message.text.strip()
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_pass'] = password
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_couchbase_bucket)
-    await message.answer("Введите имя bucket Couchbase:")
-
-@router.message(UploadProcess.waiting_couchbase_bucket)
-async def process_couchbase_bucket_manual(message: Message, state: FSMContext):
-    bucket = message.text.strip()
-    if not bucket:
-         await message.answer("Имя bucket не может быть пустым. Введите имя bucket Couchbase:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['couchbase_bucket'] = bucket
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.waiting_couchbase_query)
-    await message.answer("Введите N1QL запрос Couchbase:")
-
-@router.message(UploadProcess.waiting_couchbase_query)
-async def process_couchbase_query_manual(message: Message, state: FSMContext):
-    query = message.text.strip()
-    if not query:
-         await message.answer("N1QL запрос не может быть пустым. Введите N1QL запрос Couchbase:")
-         return
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['couchbase_query'] = query
-    await state.update_data(source_params=current_params)
-    await state.set_state(UploadProcess.select_tt_input_method)
-    await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
-
-@router.message(UploadProcess.waiting_excel_filepath)
-async def process_excel_filepath_manual(message: Message, state: FSMContext):
-    filepath = message.text.strip()
-    if not Path(filepath).is_file():
-         await message.answer("Файл не найден или это не файл. Убедитесь, что путь указан верно и файл доступен на сервере бота. Введите путь к Excel файлу:")
-         return
-    if not (filepath.lower().endswith('.xlsx') or filepath.lower().endswith('.xls')):
-         await message.answer("Файл должен быть в формате .xlsx или .xls. Введите путь к Excel файлу:")
-         return
-
-    state_data = await state.get_data()
-    current_params = state_data.get('source_params', {})
-    current_params['source_url'] = filepath
+    current_params['es_query'] = query_str # TODO: Ключ параметра в Rust - es_query, убедитесь, что он совпадает
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.select_tt_input_method)
     await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
@@ -735,16 +500,21 @@ async def process_excel_filepath_manual(message: Message, state: FSMContext):
 @router.message(UploadProcess.waiting_csv_filepath)
 async def process_csv_filepath_manual(message: Message, state: FSMContext):
     filepath = message.text.strip()
+    # Валидация на существование файла и расширение остается
     if not Path(filepath).is_file():
-         await message.answer("Файл не найден или это не файл. Убедитесь, что путь указан верно и файл доступен на сервере бота. Введите путь к CSV файлу:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('csv')
+         await message.answer(f"Файл не найден или это не файл. Убедитесь, что путь указан верно и файл доступен на сервере бота. Введите путь к {friendly_name}:") # <-- Изменено
          return
     if not filepath.lower().endswith('.csv'):
-         await message.answer("Файл должен быть в формате .csv. Введите путь к CSV файлу:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('csv')
+         await message.answer(f"Файл должен быть в формате .csv. Введите путь к {friendly_name}:") # <-- Изменено
          return
 
     state_data = await state.get_data()
     current_params = state_data.get('source_params', {})
-    current_params['source_url'] = filepath
+    current_params['source_url'] = filepath # TODO: Ключ параметра в Rust - source_url, убедитесь, что он совпадает
     await state.update_data(source_params=current_params)
     await state.set_state(UploadProcess.select_tt_input_method)
     await message.answer("Все параметры источника введены.\nВыберите способ ввода параметров для True Tabs:", reply_markup=select_input_method_keyboard('tt'))
@@ -761,10 +531,13 @@ async def process_tt_input_method(callback: CallbackQuery, state: FSMContext):
         await state.set_state(UploadProcess.waiting_upload_token)
         await state.update_data(
              param_keys_order=["upload_api_token", "upload_datasheet_id", "upload_field_map_json"],
-             current_param_index=0,
+             current_param_index=0, # Оставляем, если используется для чего-то еще
              tt_params={}
         )
-        await callback.message.edit_text("Введите токен авторизации True Tabs API:", reply_markup=cancel_kb)
+        # Используем понятное имя для запроса ПЕРВОГО параметра TT
+        first_param_key = "upload_api_token"
+        friendly_name = get_friendly_param_name(first_param_key)
+        await callback.message.edit_text(f"Введите {friendly_name}:", reply_markup=cancel_kb) # <-- Изменено
         await callback.answer()
 
     elif method == 'saved':
@@ -811,88 +584,119 @@ async def process_saved_tt_config_selection(callback: CallbackQuery, state: FSMC
 async def process_upload_token_manual(message: Message, state: FSMContext):
     token = message.text.strip()
     if not token:
-        await message.answer("Токен не может быть пустым. Введите токен авторизации True Tabs API:")
+        # Используем понятное имя для повторного запроса
+        friendly_name = get_friendly_param_name('upload_api_token')
+        await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:") # <-- Изменено
         return
     state_data = await state.get_data()
     current_params = state_data.get('tt_params', {})
-    current_params['upload_api_token'] = token
+    current_params['upload_api_token'] = token # TODO: Ключ параметра в Rust - upload_api_token, убедитесь, что он совпадает
     await state.update_data(tt_params=current_params)
     await state.set_state(UploadProcess.waiting_datasheet_id)
-    await message.answer("Введите Datasheet ID для загрузки (например, dst...):")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра TT
+    friendly_name = get_friendly_param_name('upload_datasheet_id')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
 
 @router.message(UploadProcess.waiting_datasheet_id)
 async def process_datasheet_id_manual(message: Message, state: FSMContext):
     datasheet_id = message.text.strip()
     if not datasheet_id or not datasheet_id.startswith("dst"):
-         await message.answer("Неверный формат Datasheet ID. Он должен начинаться с 'dst'. Введите Datasheet ID:")
+         # Используем понятное имя для повторного запроса
+         friendly_name = get_friendly_param_name('upload_datasheet_id')
+         await message.answer(f"Неверный формат {friendly_name}. Он должен начинаться с 'dst'. Введите {friendly_name}:") # <-- Изменено
          return
     state_data = await state.get_data()
     current_params = state_data.get('tt_params', {})
-    current_params['upload_datasheet_id'] = datasheet_id
+    current_params['upload_datasheet_id'] = datasheet_id # TODO: Ключ параметра в Rust - upload_datasheet_id, убедитесь, что он совпадает
     await state.update_data(tt_params=current_params)
     await state.set_state(UploadProcess.waiting_field_map_json)
-    await message.answer("Введите сопоставление названий колонок с Field ID True Tabs в формате JSON строки (например, {\"Header1\": \"fldID1\", \"Header2\": \"fldID2\"}):")
+    # Используем понятное имя для запроса СЛЕДУЮЩЕГО параметра TT
+    friendly_name = get_friendly_param_name('upload_field_map_json')
+    await message.answer(f"Введите {friendly_name}:") # <-- Изменено
 
 @router.message(UploadProcess.waiting_field_map_json)
 async def process_field_map_manual(message: Message, state: FSMContext):
     json_str = message.text.strip()
+    # Обработка пустого ввода для опционального поля
+    if not json_str:
+        json_str = "{}" # Или None, если Rust утилита может обработать None
+
     try:
         field_map: Dict[str, str] = json.loads(json_str)
+        # Валидация структуры JSON (остается)
         if not isinstance(field_map, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in field_map.items()):
-             await message.answer("Неверный формат JSON для сопоставления Field ID. Ожидается JSON объект, где ключи и значения - строки. Попробуйте снова.")
+             # Используем понятное имя для повторного запроса
+             friendly_name = get_friendly_param_name('upload_field_map_json')
+             await message.answer(f"Неверная структура JSON для {friendly_name}. Ожидается объект {{ \"header\": \"field_id\" }}. Попробуйте снова.") # <-- Изменено
              return
-        if not field_map:
-             await message.answer("Сопоставление Field ID не может быть пустым. Введите сопоставление Field ID в формате JSON строки:")
-             return
+        # Проверка на пустой объект, если поле НЕ опциональное в Rust (у вас оно опционально по описанию)
+        # if not field_map:
+        #      friendly_name = get_friendly_param_name('upload_field_map_json')
+        #      await message.answer(f"{friendly_name.capitalize()} не может быть пустым. Введите {friendly_name}:")
+        #      return
 
         state_data = await state.get_data()
         current_params = state_data.get('tt_params', {})
-        current_params['upload_field_map_json'] = json_str
+        current_params['upload_field_map_json'] = json_str # TODO: Ключ параметра в Rust - upload_field_map_json, убедитесь, что он совпадает
         await state.update_data(tt_params=current_params)
 
         await state.set_state(UploadProcess.confirm_parameters)
         source_params = state_data.get('source_params', {})
         tt_params = state_data.get('tt_params', {})
 
+        # --- Формирование текста подтверждения ---
+        # Здесь вы уже используете .replace('_', ' ').title(). Можно заменить на get_friendly_param_name
         confirm_text = f"<b>Собранные параметры:</b>\n\n"
         confirm_text += f"Источник: <b>{state_data.get('selected_source_type', 'Неизвестно')}</b>\n"
         for key, value in source_params.items():
-             if key == 'source_pass' or key == 'neo4j_pass' or key == 'couchbase_pass':
-                 confirm_text += f"  {key.replace('_', ' ').title()}: <code>***</code>\n"
+             # Используем get_friendly_param_name для ключей
+             friendly_key = get_friendly_param_name(key)
+             if key in ['source_pass', 'neo4j_pass', 'couchbase_pass', 'upload_api_token']: # Пароли/токены скрываем
+                 confirm_text += f"  {friendly_key.capitalize()}: <code>***</code>\n"
+             # Специальная обработка для URL/URI, чтобы не скрывать их, если это не пароль
              elif key in ['source_url', 'cassandra_addresses', 'neo4j_uri', 'couchbase_cluster_url'] and state_data.get('selected_source_type') not in ['excel', 'csv']:
-                  confirm_text += f"  {key.replace('_', ' ').title()}: <code>{value}</code>\n"
+                  confirm_text += f"  {friendly_key.capitalize()}: <code>{value}</code>\n"
+             # Специальная обработка для пути к файлу (если источник excel/csv)
              elif key == 'source_url' and state_data.get('selected_source_type') in ['excel', 'csv']:
-                 confirm_text += f"  Путь к файлу: <code>{value}</code>\n"
+                 confirm_text += f"  {get_friendly_param_name('source_url_file').capitalize()}: <code>{value}</code>\n" # Можно добавить отдельное понятное имя для пути к файлу
+             # Специальная обработка для JSON запроса Elasticsearch
              elif key == 'es_query':
                  try:
                       query_display = json.dumps(json.loads(value), indent=2, ensure_ascii=False)
-                      confirm_text += f"  {key.replace('_', ' ').title()}:\n<pre><code class=\"language-json\">{query_display}</code></pre>\n"
+                      confirm_text += f"  {friendly_key.capitalize()}:\n<pre><code class=\"language-json\">{query_display}</code></pre>\n"
                  except:
-                      confirm_text += f"  {key.replace('_', ' ').title()}: <code>Некорректный JSON</code>\n"
+                      confirm_text += f"  {friendly_key.capitalize()}: <code>Некорректный JSON</code>\n"
+             # Пропускаем специфические параметры, если они не отображаются здесь
              elif key == 'specific_params':
-                  pass
+                  pass # Пропускаем
              else:
-                confirm_text += f"  {key.replace('_', ' ').title()}: <code>{value}</code>\n"
+                confirm_text += f"  {friendly_key.capitalize()}: <code>{value}</code>\n" # <-- Используем понятное имя
 
         confirm_text += f"\n<b>Параметры True Tabs:</b>\n"
         for key, value in tt_params.items():
-            if key == 'upload_api_token':
-                confirm_text += f"  {key.replace('_', ' ').title()}: <code>***</code>\n"
-            elif key == 'upload_field_map_json':
+             # Используем get_friendly_param_name для ключей
+             friendly_key = get_friendly_param_name(key)
+             if key == 'upload_api_token':
+                 confirm_text += f"  {friendly_key.capitalize()}: <code>***</code>\n"
+             # Специальная обработка для JSON сопоставления полей
+             elif key == 'upload_field_map_json':
                  try:
                      field_map_display = json.dumps(json.loads(value), indent=2, ensure_ascii=False)
-                     confirm_text += f"  Сопоставление Field ID:\n<pre><code class=\"language-json\">{field_map_display}</code></pre>\n"
+                     confirm_text += f"  {get_friendly_param_name('upload_field_map_json_display').capitalize()}:\n<pre><code class=\"language-json\">{field_map_display}</code></pre>\n" # Можно добавить отдельное понятное имя для отображения
                  except:
-                     confirm_text += f"  Сопоставление Field ID: <code>Некорректный JSON</code>\n"
-            else:
-                confirm_text += f"  {key.replace('_', ' ').title()}: <code>{value}</code>\n"
+                     confirm_text += f"  {friendly_key.capitalize()}: <code>Некорректный JSON</code>\n"
+             else:
+                confirm_text += f"  {friendly_key.capitalize()}: <code>{value}</code>\n" # <-- Используем понятное имя
+
 
         confirm_text += f"\nВсе верно? Нажмите 'Загрузить' для старта операции."
 
         await message.answer(confirm_text, reply_markup=upload_confirm_keyboard(), parse_mode='HTML')
 
     except json.JSONDecodeError as e:
-        await message.answer(f"Ошибка парсинга JSON: {e}. Пожалуйста, проверьте формат и попробуйте снова.")
+        # Используем понятное имя для сообщения об ошибке парсинга JSON
+        friendly_name = get_friendly_param_name('upload_field_map_json')
+        await message.answer(f"Ошибка парсинга JSON для {friendly_name}: {e}. Пожалуйста, проверьте формат и попробуйте снова.") # <-- Изменено
 
 @router.callback_query(F.data == "confirm_upload", UploadProcess.confirm_parameters)
 async def handle_confirm_upload(callback: CallbackQuery, state: FSMContext, bot: Bot):
