@@ -30,7 +30,7 @@ pub async fn update_records(
 
     if status.is_success() {
         let json_response: JsonValue = serde_json::from_str(&response_text)
-            .map_err(|e| anyhow!("Failed to parse response JSON: {}. Response body: {}", e, response_text).into())?;
+            .map_err(|e| -> Box<dyn Error + Send + Sync> { anyhow!("Failed to parse response JSON: {}. Response body: {}", e, response_text).into() })?;
         Ok(json_response)
     } else {
         Err(anyhow!("API request failed with status: {}. Response body: {}", status, response_text).into())

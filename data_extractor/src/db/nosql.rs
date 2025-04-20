@@ -1,13 +1,18 @@
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use futures::TryStreamExt;
+
 use mongodb::{Client as MongoClient, bson::{Document, Bson}, options::ClientOptions};
 use std::error::Error;
+
 use redis::{Client as RedisClient, AsyncCommands};
+
 use elasticsearch::{Elasticsearch, http::transport::{Transport}};
 use serde_json::{Value as JsonValue};
+
 use crate::db::ExtractedData;
 
-pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str, expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
+pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &str, mut expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
     println!("Подключение к MongoDB...");
     let client_options = ClientOptions::parse(uri).await?;
     let client = MongoClient::with_options(client_options)?;
@@ -26,7 +31,6 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
     let mut actual_headers: Vec<String> = Vec::new();
 
     while let Some(doc) = cursor.try_next().await? {
-
         if !headers_extracted {
             actual_headers = doc.keys().map(|key| key.to_string()).collect();
             actual_headers.sort();
@@ -70,7 +74,7 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
     Ok(ExtractedData { headers: actual_headers, rows: data_rows })
 }
 
-pub async fn extract_from_redis(url: &str, key_pattern: &str, expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
+pub async fn extract_from_redis(url: &str, key_pattern: &str, mut expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
     println!("Подключение к Redis...");
     let client = RedisClient::open(url)?;
     let mut con = client.get_async_connection().await.map_err(|e| -> Box<dyn Error + Send + Sync> { anyhow!("Ошибка получения асинхронного соединения Redis: {}", e).into() })?;
@@ -85,10 +89,11 @@ pub async fn extract_from_redis(url: &str, key_pattern: &str, expected_headers: 
         return Ok(ExtractedData { headers: vec![], rows: vec![] });
     }
 
-    let mut headers = vec!["Key".to_string(), "Value".to_string()];
+    let headers = vec!["Key".to_string(), "Value".to_string()]; // Убран `mut`
+
     let mut data_rows: Vec<Vec<String>> = Vec::new();
 
-    if let Some(mut expected) = expected_headers {
+    if let Some(_expected) = expected_headers { // Убран `mut`, переименована в `_expected`
         println!("Предупреждение: Проверка ожидаемых заголовков не реализована для Redis.");
     }
 
@@ -101,7 +106,7 @@ pub async fn extract_from_redis(url: &str, key_pattern: &str, expected_headers: 
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue, expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
+pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue, mut expected_headers: Option<Vec<String>>) -> Result<ExtractedData, Box<dyn Error + Send + Sync>> {
     println!("Подключение к Elasticsearch...");
     let transport = Transport::single_node(url)?;
     let client = Elasticsearch::new(transport);
@@ -145,7 +150,7 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue
 
                         if actual_sorted != *expected {
                             let expected_str = expected.join(", ");
-                            let actual_str = actual_headers.join(", "); // Отображаем фактические как есть в ошибке
+                            let actual_str = actual_headers.join(", ");
                             let error_msg = format!("Column mismatch: Expected [{}], Got [{}]", expected_str, actual_str);
                             return Err(anyhow!(error_msg).into());
                         }
