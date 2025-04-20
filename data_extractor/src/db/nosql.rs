@@ -96,7 +96,6 @@ pub async fn extract_from_mongodb(uri: &str, db_name: &str, collection_name: &st
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-// Redis
 pub async fn extract_from_redis(url: &str, key_pattern: &str) -> Result<ExtractedData> {
     println!("Подключение к Redis...");
     let client = RedisClient::open(url)?;
@@ -123,41 +122,6 @@ pub async fn extract_from_redis(url: &str, key_pattern: &str) -> Result<Extracte
     Ok(ExtractedData { headers, rows: data_rows })
 }
 
-
-/*
-// Закомментирован блок для Cassandra
-pub async fn extract_from_cassandra(addresses: &str, keyspace: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к Cassandra...");
-    Err(anyhow!("Поддержка Cassandra временно отключена из-за проблем сборки."))
-}
-*/
-
-/*
-// Закомментирован блок для ClickHouse из-за problematic Client::new()
-pub async fn extract_from_clickhouse(url: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к ClickHouse...");
-     println!("Предупреждение: Метод ClickhouseClient::new не найден. Поддержка ClickHouse временно отключена.");
-     Ok(ExtractedData { headers: vec![], rows: vec![] })
-}
-*/
-
-/*
-// Закомментирован блок для InfluxDB из-за устаревшего API и проблем Client::new()
-pub async fn extract_from_influxdb(
-    url: &str,
-    token: &str,
-    org: &str,
-    bucket: &str,
-    query: &str, // Flux query string
-) -> Result<ExtractedData> {
-    println!("Подключение к InfluxDB...");
-    println!("Предупреждение: Поддержка InfluxDB временно отключена из-за устаревшего API и проблем сборки.");
-     Ok(ExtractedData { headers: vec![], rows: vec![] })
-}
-*/
-
-
-// Elasticsearch
 pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue) -> Result<ExtractedData> {
     println!("Подключение к Elasticsearch...");
     let transport = Transport::single_node(url)?;
@@ -203,75 +167,3 @@ pub async fn extract_from_elasticsearch(url: &str, index: &str, query: JsonValue
 
     Ok(ExtractedData { headers, rows: data_rows })
 }
-
-/*
-// Закомментирован блок для Neo4j из-за проблем сборки
-pub async fn extract_from_neo4j(uri: &str, user: &str, pass: &str, query: &str) -> Result<ExtractedData> {
-    println!("Подключение к Neo4j...");
-    println!("Предупреждение: Поддержка Neo4j временно отключена из-за проблем сборки.");
-    Err(anyhow!("Поддержка Neo4j временно отключена из-за проблем сборки."))
-    /*
-    // Реальный код для Neo4j (закомментирован)
-    let neo4j_config = Config::new(uri, user, pass)?;
-    let graph = Graph::connect(neo4j_config).await?;
-    println!("Подключение к Neo4j успешно установлено.");
-    println!("Выполнение Cypher запроса: {}", query);
-    let mut result_stream = graph.execute(query(query)).await?;
-    let mut headers: Vec<String> = Vec::new();
-    let mut data_rows: Vec<Vec<String>> = Vec::new();
-    let mut headers_extracted = false;
-    while let Some(row_result) = result_stream.next().await {
-        let row: Neo4jRow = row_result.map_err(|e| anyhow!("Ошибка получения строки из Neo4j результата: {}", e))?;
-        if !headers_extracted {
-             headers = row.keys().iter().map(|key| key.to_string()).collect();
-             headers_extracted = true;
-        }
-        let mut current_row_data: Vec<String> = Vec::new();
-        for header in &headers {
-            let value_option: Option<Neo4jValueType> = row.get(header)
-                 .map_err(|e| anyhow!("Ошибка получения значения для колонки '{}': {}", header, e))?;
-            let string_value = match value_option {
-                Some(Neo4jValueType::String(s)) => s,
-                Some(Neo4jValueType::Integer(i)) => i.to_string(),
-                Some(Neo4jValueType::Float(f)) => f.to_string(),
-                Some(Neo4jValueType::Boolean(b)) => b.to_string(),
-                Some(Neo4jValueType::Date(d)) => d.to_string(),
-                Some(Neo4jValueType::DateTime(dt)) => dt.to_string(),
-                Some(Neo4jValueType::Duration(dur)) => dur.to_string(),
-                Some(Neo4jValueType::Point(p)) => format!("{:?}", p),
-                Some(Neo4jValueType::Path(p)) => format!("{:?}", p),
-                Some(Neo4jValueType::Map(m)) => format!("{:?}", m),
-                Some(Neo4jValueType::List(l)) => format!("{:?}", l),
-                Some(Neo4jValueType::Node(n)) => format!("{:?}", n),
-                Some(Neo4jValueType::Relationship(r)) => format!("{:?}", r),
-                Some(Neo4jValueType::Time(t)) => t.to_string(),
-                None => "".to_string(),
-            };
-             current_row_data.push(string_value);
-        }
-        data_rows.push(current_row_data);
-    }
-    if !headers_extracted && data_rows.is_empty() {
-        println!("Cypher запрос вернул 0 строк.");
-        Ok(ExtractedData { headers: vec![], rows: vec![] })
-    } else {
-        println!("Cypher запрос успешно выполнен. Извлечено {} строк.", data_rows.len());
-        Ok(ExtractedData { headers, rows: data_rows })
-    }
-    */
-}
-*/
-
-/*
-// Закомментирован блок для Couchbase
-pub async fn extract_from_couchbase(
-    cluster_url: &str,
-    user: &str,
-    pass: &str,
-    bucket_name: &str,
-    query: &str,
-) -> Result<ExtractedData> {
-    println!("Подключение к Couchbase...");
-    Err(anyhow!("Поддержка Couchbase временно отключена из-за проблем сборки."))
-}
-*/
