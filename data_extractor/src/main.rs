@@ -240,39 +240,6 @@ async fn main() -> Result<()> {
         "csv" => {
             file_loader::read_csv(&db_url)? // connection is treated as file path for files
         }
-        // Note: Excel/ODS reading ("excel") is disabled due to calamine issues
-
-
-        // --- Отключенные Источники (из-за проблем сборки) ---
-        "mssql" => {
-            println!("Error: MSSQL support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("MSSQL support is temporarily disabled."));
-        }
-        "cassandra" => {
-            println!("Error: Cassandra support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("Cassandra support is temporarily disabled."));
-        }
-        "couchbase" => {
-            println!("Error: Couchbase support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("Couchbase support is temporarily disabled."));
-        }
-        "clickhouse" => {
-            println!("Error: ClickHouse support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("ClickHouse support is temporarily disabled."));
-        }
-        "influxdb" => {
-            println!("Error: InfluxDB support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("InfluxDB support is temporarily disabled."));
-        }
-        "neo4j" => {
-            println!("Error: Neo4j support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("Neo4j support is temporarily disabled."));
-        }
-        "excel" => {
-            println!("Error: Excel/ODS support is temporarily disabled due to compilation issues.");
-            return Err(anyhow!("Excel/ODS support is temporarily disabled."));
-        }
-
 
         _ => return Err(anyhow!("Unsupported data source type: {}", source_type)),
     };

@@ -6,58 +6,6 @@ use rust_xlsxwriter::{Workbook, Format, XlsxError}; // Убедитесь, чт�
 
 use crate::db::ExtractedData;
 
-// // Чтение из Excel или ODS файла - временно отключено
-// pub fn read_excel<P: AsRef<Path>>(file_path: P) -> Result<ExtractedData> {
-//     println!("Чтение Excel/ODS файла: {}", file_path.as_ref().display());
-//     println!("Предупреждение: Чтение Excel/ODS временно отключено из-за проблем сборки.");
-//     Err(anyhow!("Чтение Excel/ODS временно отключено из-за проблем сборки."))
-//     /*
-//     // Реальный код для чтения Excel (закомментирован)
-//     let mut workbook = open_workbook_auto(file_path)?;
-//
-//     let sheet_name = workbook.sheet_names().get(0)
-//         .ok_or_else(|| anyhow!("Файл не содержит листов"))?.clone();
-//
-//     let range = workbook.worksheet_range(&sheet_name)
-//         .ok_or_else(|| anyhow!("Не удалось прочитать лист '{}'", sheet_name))??;
-//
-//     let mut rows = range.rows();
-//
-//     let headers: Vec<String> = rows.next()
-//         .ok_or_else(|| anyhow!("Лист '{}' пустой или не содержит заголовков", sheet_name))?
-//         .iter()
-//         .map(|cell| cell.to_string())
-//         .collect();
-//
-//     let data_rows: Vec<Vec<String>> = rows
-//         .map(|row| {
-//             row.iter()
-//                .map(|cell| match cell {
-//                     Data::Empty => "".to_string(),
-//                     Data::String(s) => s.clone(),
-//                     Data::Int(i) => i.to_string(),
-//                     Data::Float(f) => f.to_string(),
-//                     Data::Bool(b) => b.to_string(),
-//                     Data::DateTime(d) => d.to_string(),
-//                     Data::Duration(dur) => dur.to_string(),
-//                     Data::Error(e) => format!("ERROR: {:?}", e),
-//                     Data::DateTimeIso(d) => d.clone(),
-//                     Data::DurationIso(d) => d.clone(),
-//                     Data::Time(t) => t.to_string(),
-//                     Data::TimeIso(t) => t.clone(),
-//                     _ => cell.to_string(),
-//                })
-//                .collect()
-//         })
-//         .collect();
-//
-//     println!("Извлечено {} строк из листа '{}'.", data_rows.len(), sheet_name);
-//
-//     Ok(ExtractedData { headers, rows: data_rows })
-//     */
-// }
-
-// Чтение из CSV файла - Оставляем этот код активным
 pub fn read_csv<P: AsRef<Path>>(file_path: P) -> Result<ExtractedData> {
     println!("Чтение CSV файла: {}", file_path.as_ref().display());
     let mut reader = csv::Reader::from_path(file_path)?;
