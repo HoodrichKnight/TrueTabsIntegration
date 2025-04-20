@@ -106,13 +106,12 @@ async def handle_view_history_details(callback: CallbackQuery, bot: Bot): # До
     if record['error_message'] and record['status'] == 'ERROR':
         details_text += f"\n<b>Сообщение об ошибке:</b>\n<pre><code>{record['error_message']}</code></pre>\n"
 
-    # TODO: Добавить отображение использованных параметров (требует их сохранения в БД при добавлении записи истории)
-    # if record.get('parameters'): # Если поле с параметрами существует в записи истории
-    #      try:
-    #           params_display = json.dumps(json.loads(record['parameters']), indent=2, ensure_ascii=False)
-    #           details_text += f"\n<b>Использованные параметры:</b>\n<pre><code class=\"language-json\">{params_display}</code></pre>\n"
-    #      except:
-    #           details_text += f"\n<b>Использованные параметры:</b> <code>Некорректный JSON</code>\n"
+    if record.get('parameters'): # Если поле с параметрами существует в записи истории
+         try:
+              params_display = json.dumps(json.loads(record['parameters']), indent=2, ensure_ascii=False)
+              details_text += f"\n<b>Использованные параметры:</b>\n<pre><code class=\"language-json\">{params_display}</code></pre>\n"
+         except Exception:
+              details_text += f"\n<b>Использованные параметры:</b> <code>Некорректный JSON</code>\n"
 
 
     builder = InlineKeyboardBuilder()

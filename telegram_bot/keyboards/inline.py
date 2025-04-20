@@ -2,6 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Dict, Any, Optional
 
+# --- Существующие клавиатуры (без изменений) ---
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -13,29 +14,38 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="💾 Сохраненные конфигурации", callback_data="manage_configs")
     )
-    # Кнопка Отмена теперь на главном меню не нужна, она есть в других флоу
-    # builder.row(
-    #     InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
-    # )
+    builder.row(
+        InlineKeyboardButton(text="📅 Запланированные задания", callback_data="manage_schedules")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+    return builder.as_markup()
+
+def manage_schedules_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить новое задание", callback_data="add_schedule")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📋 Список заданий", callback_data="list_schedules")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="main_menu")
+    )
     return builder.as_markup()
 
 def source_selection_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # Убраны Labguru, Cassandra, Neo4j, Couchbase
     sources = [
         ("PostgreSQL", "postgres"), ("MySQL", "mysql"), ("SQLite", "sqlite"),
         ("MongoDB", "mongodb"), ("Redis", "redis"), ("Elasticsearch", "elasticsearch"),
         ("CSV файл", "csv"), ("Excel файл", "excel"),
-        # Удаленные источники:
-        # ("Labguru", "labguru"),
-        # ("Cassandra", "cassandra"),
-        # ("Neo4j", "neo4j"),
-        # ("Couchbase", "couchbase"),
     ]
     for text, source_type in sources:
         builder.button(text=text, callback_data=f"start_upload_process:{source_type}")
 
-    builder.adjust(2) # По 2 кнопки в ряд
+    builder.adjust(2)
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="main_menu"))
     return builder.as_markup()
 
@@ -108,7 +118,6 @@ def manage_tt_configs_keyboard() -> InlineKeyboardMarkup:
 
 def select_input_method_keyboard(config_type: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # callback_data теперь включает config_type для хэндлера
     builder.row(
         InlineKeyboardButton(text="✏️ Ввести вручную", callback_data=f"select_input_method:manual:{config_type}")
     )
@@ -119,7 +128,6 @@ def select_input_method_keyboard(config_type: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
     )
     return builder.as_markup()
-
 
 def select_config_keyboard(configs: List[Dict[str, Any]], callback_prefix: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -133,21 +141,21 @@ def select_config_keyboard(configs: List[Dict[str, Any]], callback_prefix: str) 
             elif config.get('upload_datasheet_id'):
                  text += f" (Datasheet ID: {config['upload_datasheet_id']})"
 
-            # Добавляем индикатор дефолтной конфигурации
             if config.get('is_default'):
                  text += " ⭐"
 
             builder.row(InlineKeyboardButton(text=text, callback_data=f"select_config:{callback_prefix}:{config['name']}"))
 
+
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
+
 
 def config_actions_keyboard(config: Dict[str, Any], config_type: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_{config_type}_config:{config['name']}"))
     builder.row(InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_{config_type}_config_confirm:{config['name']}"))
 
-    # Кнопка "Сделать по умолчанию" только если не дефолтная
     if not config.get('is_default'):
         builder.row(InlineKeyboardButton(text="⭐ Сделать по умолчанию", callback_data=f"set_default_{config_type}_config:{config['name']}"))
 
@@ -166,5 +174,116 @@ def operation_in_progress_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="❌ Отменить операцию", callback_data="cancel_operation")
+    )
+    return builder.as_markup()
+
+def select_schedule_action_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Извлечь данные (extract)", callback_data="select_schedule_action:extract"))
+
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+    return builder.as_markup()
+
+# --- НОВАЯ КЛАВИАТУРА для выбора типа триггера ---
+def select_schedule_trigger_type_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="По интервалу (Interval)", callback_data="select_trigger_type:interval"))
+    builder.row(InlineKeyboardButton(text="По расписанию (Cron)", callback_data="select_trigger_type:cron"))
+    builder.row(InlineKeyboardButton(text="Один раз в дату/время (Date)", callback_data="select_trigger_type:date"))
+
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+    return builder.as_markup()
+
+# --- НОВАЯ КЛАВИАТУРА для подтверждения создания задания ---
+def confirm_schedule_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Подтвердить и создать", callback_data="confirm_create_schedule"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+    return builder.as_markup()
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⚙️ Выбрать источник данных", callback_data="select_source")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📊 История загрузок", callback_data="view_history:0")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💾 Сохраненные конфигурации", callback_data="manage_configs")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📅 Запланированные задания", callback_data="manage_schedules")
+    )
+    # --- NEW Button for Weather ---
+    builder.row(
+        InlineKeyboardButton(text="☀️ Погода", callback_data="weather_menu")
+    )
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+    return builder.as_markup()
+
+def weather_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🏙️ Погода в городе", callback_data="weather_by_city")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🗺️ Погода по координатам", callback_data="weather_by_coords")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="main_menu")
+    )
+    return builder.as_markup()
+
+# --- NEW Keyboard for selecting forecast period ---
+def select_forecast_period_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    # Periods supported by OpenWeatherMap Free API (3-hour intervals, up to 5 days)
+    # Mapping user-friendly periods to API intervals/summaries
+    builder.row(
+        InlineKeyboardButton(text="Сейчас", callback_data="weather_period:now"),
+        InlineKeyboardButton(text="Ближайший час", callback_data="weather_period:1h"),
+        InlineKeyboardButton(text="Ближайшие 3 часа", callback_data="weather_period:3h"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="На сегодня (до конца дня)", callback_data="weather_period:today"), # Will require summarizing 3h intervals
+    )
+    builder.row(
+        InlineKeyboardButton(text="На 1 день", callback_data="weather_period:1d"), # Will require summarizing from forecast
+        InlineKeyboardButton(text="На 3 дня", callback_data="weather_period:3d"), # Will require summarizing from forecast
+    )
+    # Consider if Week/Month are feasible with paid API or need external logic
+    builder.row(
+        InlineKeyboardButton(text="На неделю", callback_data="weather_period:7d"),
+        InlineKeyboardButton(text="На месяц", callback_data="weather_period:30d"),
+    )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="weather_menu")) # Back to weather menu
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")) # Added Cancel button
+
+    # Note: Week and Month forecast require paid API or external logic to summarize data
+
+    return builder.as_markup()
+
+def schedule_details_actions_keyboard(job_id: str, is_paused: bool = False) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if is_paused:
+        builder.row(
+            InlineKeyboardButton(text="▶️ Возобновить", callback_data=f"resume_schedule:{job_id}"),
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_schedule:{job_id}"),
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="⏸️ Пауза", callback_data=f"pause_schedule:{job_id}"),
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_schedule:{job_id}"),
+        )
+    builder.row(
+        InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"delete_schedule_confirm:{job_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="list_schedules")
     )
     return builder.as_markup()

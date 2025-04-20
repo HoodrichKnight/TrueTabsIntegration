@@ -10,8 +10,10 @@ from .sqlite_db import (
     add_tt_config,
     get_tt_config,
     list_tt_configs,
-    delete_tt_config
+    delete_tt_config,
+    get_last_upload_for_scheduled_job
 )
+
 
 __all__ = [
     'init_db',
@@ -25,5 +27,6 @@ __all__ = [
     'add_tt_config',
     'get_tt_config',
     'list_tt_configs',
-    'delete_tt_config'
+    'delete_tt_config',
+    'get_last_upload_for_scheduled_job'
 ]

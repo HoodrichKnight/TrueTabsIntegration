@@ -5,3 +5,5 @@ python-dotenv==1.*
 cryptography==42.*
 validators==0.*
 asyncio==3.4.*
+sqlalchemy==2.*
+APScheduler==3.*

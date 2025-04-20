@@ -1,8 +1,8 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from ..keyboards import source_selection_keyboard, main_menu_keyboard
+from telegram_bot.keyboards import source_selection_keyboard, main_menu_keyboard
 from aiogram.fsm.context import FSMContext
-from .upload_handlers import start_upload_process_fsm
+from telegram_bot.handlers.upload_handlers import start_upload_process
 
 router = Router()
 
@@ -16,7 +16,7 @@ async def handle_select_source_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("start_upload_process:"))
 async def handle_source_selected_initiate_fsm(callback: CallbackQuery, state: FSMContext):
-    await start_upload_process_fsm(callback, state)
+    await start_upload_process(callback, state)
 
 @router.callback_query(F.data == "main_menu")
 async def handle_back_to_main_menu(callback: CallbackQuery, state: FSMContext):

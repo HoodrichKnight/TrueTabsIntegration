@@ -9,7 +9,8 @@ from .inline import (
     select_input_method_keyboard,
     select_config_keyboard,
     config_actions_keyboard,
-    delete_confirm_keyboard
+    delete_confirm_keyboard,
+    operation_in_progress_keyboard
 )
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     'select_input_method_keyboard',
     'select_config_keyboard',
     'config_actions_keyboard',
-    'delete_confirm_keyboard'
+    'delete_confirm_keyboard',
+    'operation_in_progress_keyboard'
 ]
